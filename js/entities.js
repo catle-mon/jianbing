@@ -1,6 +1,6 @@
 /**
  * ============================================================
- * 煎饼摊求生 - 实体类定义 (entities.js) v2
+ * 不随便煎饼 - 实体类定义 (entities.js) v2
  * ============================================================
  * 新增：
  *   - Pancake: 翻面机制（第一面/第二面）、小料系统
@@ -10,6 +10,7 @@
  */
 
 const CONFIG = require('./config.js');
+const { fillRoundRect, strokeRoundRect } = require('./utils.js');
 
 // ===================== Pancake 煎饼类 =====================
 
@@ -90,15 +91,19 @@ class Pancake {
     return true;
   }
 
+  canAddTopping(toppingId) {
+    if (this.state === 'burnt') return false;
+    if (this.toppings.includes(toppingId)) return false;
+    return toppingId === 'egg' ? this.phase === 'first' : this.phase === 'second';
+  }
+
   /**
-   * addTopping - 添加小料（只能在翻面后的第二面）
+   * addTopping - 鸡蛋在翻面前加入，其余配料在翻面后加入
    * @param {string} toppingId - 小料 ID
    * @returns {boolean} 是否成功
    */
   addTopping(toppingId) {
-    if (this.phase !== 'second') return false;
-    if (this.state === 'burnt') return false;
-    if (this.toppings.includes(toppingId)) return false;
+    if (!this.canAddTopping(toppingId)) return false;
     this.toppings.push(toppingId);
     return true;
   }
@@ -146,14 +151,31 @@ class Pancake {
     ctx.translate(this.x, this.y + this.bounce);
     ctx.scale(this.scale, this.scale);
 
-    // 1. 煎饼主体
+    // 1. 煎饼主体：中心受光、边缘焦香，避免纯色圆片感
     ctx.beginPath();
     ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
-    ctx.fillStyle = this.getColor();
+    const baseColor = this.getColor();
+    const pancakeGradient = ctx.createRadialGradient(-10, -12, 3, 0, 0, this.radius);
+    pancakeGradient.addColorStop(0, this.state === 'burnt' ? '#7A594B' : '#FFF0A8');
+    pancakeGradient.addColorStop(0.68, baseColor);
+    pancakeGradient.addColorStop(1, this.state === 'raw' ? '#E8DCC7' : (this.state === 'burnt' ? '#382823' : '#C9852E'));
+    ctx.fillStyle = pancakeGradient;
+    ctx.shadowColor = 'rgba(23,35,39,0.28)';
+    ctx.shadowBlur = 8;
+    ctx.shadowOffsetY = 3;
     ctx.fill();
+    ctx.shadowColor = 'transparent';
     ctx.strokeStyle = CONFIG.COLOR.panBorder;
     ctx.lineWidth = 2;
     ctx.stroke();
+
+    if (this.state !== 'raw') {
+      const spots = [[-17, -5, 3], [13, -15, 2], [18, 10, 3], [-6, 18, 2], [2, -2, 2]];
+      ctx.fillStyle = this.state === 'burnt' ? 'rgba(30,20,17,0.42)' : 'rgba(161,91,29,0.24)';
+      spots.forEach(([sx, sy, sr]) => {
+        ctx.beginPath(); ctx.arc(sx, sy, sr, 0, Math.PI * 2); ctx.fill();
+      });
+    }
 
     // 翻面标记：第一面翻过的饼略深色描边
     if (this.flipped) {
@@ -221,7 +243,7 @@ class Pancake {
 // ===================== Customer 顾客类 =====================
 
 class Customer {
-  constructor(id, orderToppings, patience, x, y, typeInfo) {
+  constructor(id, orderToppings, patience, x, y, typeInfo, dislikedTopping) {
     this.id = id;
     this.orderToppings = orderToppings; // 订单小料数组（可能为空）
     this.orderKey = [...orderToppings].sort().join('+'); // 用于匹配
@@ -236,6 +258,7 @@ class Customer {
     this.shake = 0;
     this.mouth = 'smile';
     this.typeInfo = typeInfo; // { id, name, color, patienceMult }
+    this.dislikedTopping = dislikedTopping || null;
     this.eatingTimer = 0;     // 吃完动画计时
     this.praised = false;     // 是否已触发夸赞
     this.doubleOrder = false; // 是否再来一份
@@ -298,6 +321,7 @@ class Customer {
     const oToppings = [...this.orderToppings].sort();
     const matchToppings = pToppings.length === oToppings.length &&
       pToppings.every((v, i) => v === oToppings[i]);
+    const violatesDislike = !!this.dislikedTopping && pToppings.includes(this.dislikedTopping);
 
     let price = 0;
     let text = '';
@@ -312,7 +336,7 @@ class Customer {
       text = '糊了!';
       popularity = CONFIG.GAME.popularityBurnt;
       retry = false;
-    } else if (matchToppings && pancake.canServe()) {
+    } else if (!violatesDislike && matchToppings && pancake.canServe()) {
       const quality = pancake.getQuality();
       // 基础售价
       let basePrice = priceMap.base;
@@ -343,12 +367,12 @@ class Customer {
     } else {
       // 上错菜
       price = 0;
-      text = '上错了!';
+      text = violatesDislike ? '加了忌口!' : '上错了!';
       popularity = CONFIG.GAME.popularityWrong;
       // 小概率顾客要求重做
       if (Math.random() < CONFIG.GAME.retryOrderChance) {
         retry = true;
-        text = '重做一份!';
+        text = violatesDislike ? '忌口，重做!' : '重做一份!';
         this.patience = Math.min(this.patience + this.maxPatience * 0.3, this.maxPatience);
       }
     }
@@ -369,28 +393,61 @@ class Customer {
     ctx.translate(this.x + this.shake, this.y);
 
     const bodyColor = this.typeInfo ? this.typeInfo.color : CONFIG.COLOR.customerBody;
+    const typeId = this.typeInfo ? this.typeInfo.id : 'normal';
 
-    // 1. 身体
+    // 1. 地面投影与身体
+    ctx.fillStyle = 'rgba(23,35,39,0.16)';
+    ctx.beginPath(); ctx.ellipse(0, this.height / 2 + 10, 25, 7, 0, 0, Math.PI * 2); ctx.fill();
+
     ctx.fillStyle = bodyColor;
-    ctx.fillRect(-this.width / 2, -this.height / 2, this.width, this.height);
+    fillRoundRect(ctx, -this.width / 2, -this.height / 2, this.width, this.height, 7);
+    ctx.fillStyle = 'rgba(255,255,255,0.16)';
+    fillRoundRect(ctx, -this.width / 2 + 4, -this.height / 2 + 4, 10, this.height - 8, 5);
     ctx.strokeStyle = CONFIG.COLOR.panBorder;
     ctx.lineWidth = 2;
-    ctx.strokeRect(-this.width / 2, -this.height / 2, this.width, this.height);
+    strokeRoundRect(ctx, -this.width / 2, -this.height / 2, this.width, this.height, 7);
 
-    // 2. 顾客类型标签（小文字）
+    // 2. 顾客类型标签
     if (this.typeInfo) {
-      ctx.fillStyle = 'rgba(255,255,255,0.8)';
-      ctx.font = '9px sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.94)';
+      fillRoundRect(ctx, -23, -51, 46, 15, 5);
+      ctx.fillStyle = CONFIG.COLOR.text;
+      ctx.font = 'bold 9px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(this.typeInfo.name, 0, -this.height / 2 + 10);
+      ctx.fillText(this.typeInfo.name, 0, -43.5);
     }
 
     // 3. 脸部
-    ctx.fillStyle = CONFIG.COLOR.customerFace;
+    const faceGradient = ctx.createRadialGradient(-5, -25, 2, 0, -18, 20);
+    faceGradient.addColorStop(0, '#FFFDF8');
+    faceGradient.addColorStop(1, '#F2D5BC');
+    ctx.fillStyle = faceGradient;
     ctx.beginPath();
-    ctx.arc(0, -this.height / 4, 18, 0, Math.PI * 2);
+    ctx.arc(0, -this.height / 4, typeId === 'kid' ? 17 : 18, 0, Math.PI * 2);
     ctx.fill();
+    ctx.strokeStyle = 'rgba(38,50,56,0.28)'; ctx.lineWidth = 1; ctx.stroke();
+
+    // 发型和能快速辨认身份的小配件
+    ctx.fillStyle = typeId === 'elder' ? '#ECEFF1' : '#3E3531';
+    ctx.beginPath();
+    ctx.arc(0, -25, 16, Math.PI, Math.PI * 2);
+    ctx.fill();
+    if (typeId === 'worker') {
+      ctx.fillStyle = '#F4F6F7'; ctx.fillRect(-8, 2, 16, 8);
+      ctx.fillStyle = '#C94C4C';
+      ctx.beginPath(); ctx.moveTo(0, 5); ctx.lineTo(-4, 14); ctx.lineTo(0, 20); ctx.lineTo(4, 14); ctx.closePath(); ctx.fill();
+    } else if (typeId === 'student') {
+      ctx.strokeStyle = '#FFF'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(-12, 2); ctx.lineTo(0, 12); ctx.lineTo(12, 2); ctx.stroke();
+    } else if (typeId === 'kid') {
+      ctx.fillStyle = '#3E3531';
+      ctx.beginPath(); ctx.moveTo(-13, -31); ctx.lineTo(-6, -39); ctx.lineTo(-2, -30); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(4, -31); ctx.lineTo(10, -39); ctx.lineTo(14, -29); ctx.fill();
+    } else if (typeId === 'elder') {
+      ctx.strokeStyle = '#546E7A'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(-7, -21, 5, 0, Math.PI * 2); ctx.arc(7, -21, 5, 0, Math.PI * 2); ctx.moveTo(-2, -21); ctx.lineTo(2, -21); ctx.stroke();
+    }
 
     // 4. 眼睛
     ctx.fillStyle = CONFIG.COLOR.panBorder;
@@ -414,6 +471,11 @@ class Customer {
     }
     ctx.stroke();
 
+    if (typeId === 'foodie') {
+      ctx.fillStyle = '#5D4037';
+      ctx.beginPath(); ctx.ellipse(-4, -8, 5, 2, -0.2, 0, Math.PI * 2); ctx.ellipse(4, -8, 5, 2, 0.2, 0, Math.PI * 2); ctx.fill();
+    }
+
     // 6. 等待中显示订单 + 耐心条
     if (this.state === 'waiting') {
       // 订单小料图标
@@ -427,7 +489,13 @@ class Customer {
       this.orderToppings.forEach(tid => {
         orderText += tmap[tid] || '?';
       });
-      ctx.fillText(orderText, 0, this.height / 4);
+      ctx.fillText(orderText, 0, this.dislikedTopping ? 15 : this.height / 4);
+
+      if (this.dislikedTopping) {
+        ctx.fillStyle = '#C62828';
+        ctx.font = 'bold 9px sans-serif';
+        ctx.fillText('忌' + (tmap[this.dislikedTopping] || '?'), 0, 30);
+      }
 
       // 耐心条背景
       const barW = 52;

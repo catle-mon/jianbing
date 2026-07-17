@@ -12,25 +12,31 @@
 
 module.exports = {
   COLOR: {
-    bg: '#FFF8E1',
-    pan: '#795548',
-    panBorder: '#3E2723',
-    batter: '#FFFFFF',
+    bg: '#DDECE8',
+    wall: '#DDECE8',
+    wallLine: '#B8D3CE',
+    counter: '#E9B968',
+    counterEdge: '#B86A42',
+    panel: '#FFF8EA',
+    stove: '#43545A',
+    pan: '#26353A',
+    panBorder: '#172327',
+    batter: '#FFFDF4',
     egg: '#FFD54F',
     ham: '#FF8A80',
     lettuce: '#66BB6A',
     crispy: '#FFB74D',
     scallion: '#81C784',
     sauce: '#8D6E63',
-    cooked: '#FFCA28',
+    cooked: '#F5B942',
     burnt: '#5D4037',
     customerBody: '#90CAF9',
     customerFace: '#FFFFFF',
-    text: '#3E2723',
-    btn: '#FF7043',
-    btnActive: '#F4511E',
+    text: '#263238',
+    btn: '#D95F4C',
+    btnActive: '#B94738',
     btnDisabled: '#BCAAA4',
-    btnTopping: '#66BB6A',
+    btnTopping: '#3F8F73',
     barGreen: '#66BB6A',
     barYellow: '#FFA726',
     barRed: '#EF5350',
@@ -71,15 +77,23 @@ module.exports = {
       { id: 'scallion', name: '葱', colorKey: 'scallion', unlockWave: 7, cost: 1, buyAmount: 3 },
       { id: 'sauce', name: '酱', colorKey: 'sauce', unlockWave: 9, cost: 2, buyAmount: 3 }
     ],
+    smallToppingIds: ['lettuce', 'crispy', 'scallion', 'sauce'],
+    dislikeChance: 0.35,
 
     // 顾客类型（随 wave 解锁）
     customerTypes: [
-      { id: 'normal', name: '市民', patienceMult: 1.0, color: '#90CAF9', unlockWave: 1, weight: 35 },
-      { id: 'worker', name: '上班族', patienceMult: 0.70, color: '#B39DDB', unlockWave: 1, weight: 20 },
-      { id: 'student', name: '学生', patienceMult: 0.85, color: '#A5D6A7', unlockWave: 1, weight: 20 },
-      { id: 'kid', name: '小孩', patienceMult: 0.55, color: '#F48FB1', unlockWave: 2, weight: 10 },
-      { id: 'foodie', name: '老饕', patienceMult: 1.20, color: '#FFCC80', unlockWave: 4, weight: 8 },
-      { id: 'elder', name: '老人', patienceMult: 1.40, color: '#BCAAA4', unlockWave: 5, weight: 7 }
+      { id: 'normal', name: '市民', patienceMult: 1.0, color: '#70A9C7', unlockWave: 1, weight: 35,
+        trait: '耐心标准', desc: '最常见，等待时间为标准值' },
+      { id: 'worker', name: '上班族', patienceMult: 0.70, color: '#8E74B8', unlockWave: 1, weight: 20,
+        trait: '赶时间', desc: '耐心少30%，需要优先照顾' },
+      { id: 'student', name: '学生', patienceMult: 0.85, color: '#5FAE7C', unlockWave: 1, weight: 20,
+        trait: '课间来客', desc: '耐心少15%，出现较频繁' },
+      { id: 'kid', name: '小孩', patienceMult: 0.55, color: '#E56D91', unlockWave: 2, weight: 10,
+        trait: '坐不住', desc: '耐心少45%，所有顾客中最急' },
+      { id: 'foodie', name: '老饕', patienceMult: 1.20, color: '#D98B3F', unlockWave: 4, weight: 8,
+        trait: '慢慢品', desc: '耐心多20%，第4波开始出现' },
+      { id: 'elder', name: '老人', patienceMult: 1.40, color: '#78909C', unlockWave: 5, weight: 7,
+        trait: '不着急', desc: '耐心多40%，第5波开始出现' }
     ],
 
     // 人气系统
@@ -134,8 +148,7 @@ module.exports = {
 
   UPGRADES: [
     { id: 'slot', name: '大锅', desc: '锅位+1', cost: 80, max: 3, value: 1 },
-    { id: 'speed', name: '快手', desc: '烹饪-15%', cost: 60, max: 5, value: 0.15 },
-    { id: 'patience', name: '微笑', desc: '耐心+20%', cost: 50, max: 5, value: 0.2 },
-    { id: 'price', name: '招牌', desc: '售价+15%', cost: 40, max: 5, value: 0.15 }
+    { id: 'speed', name: '技巧', desc: '烹饪-15%', cost: 60, max: 5, value: 0.15 },
+    { id: 'patience', name: '微笑', desc: '耐心+20%', cost: 50, max: 5, value: 0.2 }
   ]
 };

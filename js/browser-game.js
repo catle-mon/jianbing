@@ -1,6 +1,6 @@
 /**
  * ============================================================
- * 煎饼摊求生 - 核心游戏逻辑 (core.js) v2
+ * 不随便煎饼 - 浏览器兼容层 (browser-game.js) v2
  * ============================================================
  * 新增：
  *   - 翻面机制（点击锅位翻面）
@@ -122,7 +122,7 @@ class Game {
     addBtn(2, 2, 'upSlot', '大锅', 'upgrade', { upId: 'slot' });
 
     // Row 3: 更多升级
-    addBtn(3, 0, 'upSpeed', '快手', 'upgrade', { upId: 'speed' });
+    addBtn(3, 0, 'upSpeed', '技巧', 'upgrade', { upId: 'speed' });
     addBtn(3, 1, 'upPatience', '微笑', 'upgrade', { upId: 'patience' });
     addBtn(3, 2, 'upPrice', '招牌', 'upgrade', { upId: 'price' });
     addBtn(3, 3, 'upContainer', '托盘', 'upgrade', { upId: 'container' });
@@ -1089,7 +1089,7 @@ class Game {
     const w = this.width, h = this.height;
     ctx.fillStyle = CONFIG.COLOR.bg; ctx.fillRect(0, 0, w, h);
     ctx.fillStyle = CONFIG.COLOR.text; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = 'bold 36px sans-serif'; ctx.fillText('🥞 煎饼摊求生', w / 2, h / 2 - 100);
+    ctx.font = 'bold 36px sans-serif'; ctx.fillText('🥞 不随便煎饼', w / 2, h / 2 - 100);
     ctx.font = '17px sans-serif'; ctx.fillStyle = '#5D4037'; ctx.fillText('摊煎饼 · 攒人气 · 撑过饥荒', w / 2, h / 2 - 55);
     ctx.font = '13px sans-serif';
     ctx.fillText('1. 点击【面饼】生成面糊，拖到锅位下锅', w / 2, h / 2 - 30);
