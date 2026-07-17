@@ -1,6 +1,6 @@
 /**
  * ============================================================
- * 煎饼摊求生 - 新手教程回归测试 (test-tutorial.js)
+ * 不随便煎饼 - 新手教程回归测试 (test-tutorial.js)
  * ============================================================
  * 用法：node test-tutorial.js
  * 说明：mock wx 后直接 require core.js，以 new Game(null, 375, 667)
@@ -69,7 +69,7 @@ function advanceToStep2(g) {
   return g.pans[0].pancake;
 }
 
-console.log('煎饼摊求生 · 新手教程回归测试\n');
+console.log('不随便煎饼 · 新手教程回归测试\n');
 
 // 1. 拖拽主流程：面饼按钮 → 拖到锅位松开 → 下锅、step=1
 test('1. 拖拽主流程（拿面糊 → 拖到锅位松开下锅）', () => {

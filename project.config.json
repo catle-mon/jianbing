@@ -1,5 +1,5 @@
 {
-  "description": "煎饼摊求生 - 微信小游戏",
+  "description": "不随便煎饼 - 微信小游戏",
   "packOptions": {
     "ignore": [],
     "include": []
@@ -50,7 +50,7 @@
   "compileType": "game",
   "libVersion": "2.30.0",
   "appid": "wx1abe4147b6310a28",
-  "projectname": "pancake-survivor",
+  "projectname": "busuibian-jianbing",
   "condition": {},
   "simulatorPluginLibVersion": {},
   "isGameTourist": false,
