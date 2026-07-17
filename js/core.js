@@ -294,6 +294,7 @@ class Game {
     const now = Date.now();
     if (this.waveState === 'spawning') {
       if (this.customersSpawned < this.customersTotal) {
+        if (this.customers.length >= CONFIG.GAME.maxCustomers) return;
         if (now - this.lastSpawnTime > this.waveInterval) {
           this.spawnCustomer();
           this.lastSpawnTime = now;
