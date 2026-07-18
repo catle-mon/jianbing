@@ -41,7 +41,7 @@ class Pancake {
       this.elapsed += dt;
       const progress = this.elapsed / this.cookTime;
 
-      if (progress >= 1) {
+      if (this.elapsed >= this.cookTime + CONFIG.GAME.burnGraceTime) {
         this.state = 'burnt';
         this.needsFlip = false;
       } else if (progress >= CONFIG.GAME.flipPerfectStart && progress <= CONFIG.GAME.flipPerfectEnd) {
@@ -58,7 +58,7 @@ class Pancake {
       this.elapsed += dt;
       const progress = this.elapsed / this.side2Time;
 
-      if (progress >= 1) {
+      if (this.elapsed >= this.side2Time + CONFIG.GAME.burnGraceTime) {
         this.state = 'burnt';
       } else if (progress >= CONFIG.GAME.perfectStart && progress <= CONFIG.GAME.perfectEnd) {
         this.state = 'perfect';
@@ -80,9 +80,9 @@ class Pancake {
    * flip - 执行翻面
    * @returns {boolean} 是否成功
    */
-  flip() {
+  flip(forcePerfect = false) {
     if (this.phase !== 'first') return false;
-    this.flipPerfect = (this.state === 'perfect');
+    this.flipPerfect = forcePerfect || (this.state === 'perfect');
     this.phase = 'second';
     this.flipped = true;
     this.elapsed = 0;
@@ -251,14 +251,15 @@ class Customer {
     this.patience = patience;
     this.x = x;
     this.y = y;
-    this.width = 60;
-    this.height = 80;
+    this.width = 68;
+    this.height = 88;
     this.state = 'waiting'; // waiting / eating / leaving / retry
     this.animTime = 0;
     this.shake = 0;
     this.mouth = 'smile';
     this.typeInfo = typeInfo; // { id, name, color, patienceMult }
     this.dislikedTopping = dislikedTopping || null;
+    this.orderBubbleOffset = 0;
     this.eatingTimer = 0;     // 吃完动画计时
     this.praised = false;     // 是否已触发夸赞
     this.doubleOrder = false; // 是否再来一份
@@ -397,7 +398,7 @@ class Customer {
 
     // 1. 地面投影与身体
     ctx.fillStyle = 'rgba(23,35,39,0.16)';
-    ctx.beginPath(); ctx.ellipse(0, this.height / 2 + 10, 25, 7, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(0, this.height / 2 + 10, 28, 8, 0, 0, Math.PI * 2); ctx.fill();
 
     ctx.fillStyle = bodyColor;
     fillRoundRect(ctx, -this.width / 2, -this.height / 2, this.width, this.height, 7);
@@ -410,12 +411,12 @@ class Customer {
     // 2. 顾客类型标签
     if (this.typeInfo) {
       ctx.fillStyle = 'rgba(255,255,255,0.94)';
-      fillRoundRect(ctx, -23, -51, 46, 15, 5);
+      fillRoundRect(ctx, -24, -this.height / 2 + 5, 48, 15, 5);
       ctx.fillStyle = CONFIG.COLOR.text;
       ctx.font = 'bold 9px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(this.typeInfo.name, 0, -43.5);
+      ctx.fillText(this.typeInfo.name, 0, -this.height / 2 + 12.5);
     }
 
     // 3. 脸部
@@ -424,14 +425,14 @@ class Customer {
     faceGradient.addColorStop(1, '#F2D5BC');
     ctx.fillStyle = faceGradient;
     ctx.beginPath();
-    ctx.arc(0, -this.height / 4, typeId === 'kid' ? 17 : 18, 0, Math.PI * 2);
+    ctx.arc(0, -this.height / 4 + 3, typeId === 'kid' ? 18 : 20, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = 'rgba(38,50,56,0.28)'; ctx.lineWidth = 1; ctx.stroke();
 
     // 发型和能快速辨认身份的小配件
     ctx.fillStyle = typeId === 'elder' ? '#ECEFF1' : '#3E3531';
     ctx.beginPath();
-    ctx.arc(0, -25, 16, Math.PI, Math.PI * 2);
+    ctx.arc(0, -23, 17, Math.PI, Math.PI * 2);
     ctx.fill();
     if (typeId === 'worker') {
       ctx.fillStyle = '#F4F6F7'; ctx.fillRect(-8, 2, 16, 8);
@@ -442,8 +443,8 @@ class Customer {
       ctx.beginPath(); ctx.moveTo(-12, 2); ctx.lineTo(0, 12); ctx.lineTo(12, 2); ctx.stroke();
     } else if (typeId === 'kid') {
       ctx.fillStyle = '#3E3531';
-      ctx.beginPath(); ctx.moveTo(-13, -31); ctx.lineTo(-6, -39); ctx.lineTo(-2, -30); ctx.fill();
-      ctx.beginPath(); ctx.moveTo(4, -31); ctx.lineTo(10, -39); ctx.lineTo(14, -29); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(-13, -29); ctx.lineTo(-6, -38); ctx.lineTo(-2, -28); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(4, -29); ctx.lineTo(10, -38); ctx.lineTo(14, -27); ctx.fill();
     } else if (typeId === 'elder') {
       ctx.strokeStyle = '#546E7A'; ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.arc(-7, -21, 5, 0, Math.PI * 2); ctx.arc(7, -21, 5, 0, Math.PI * 2); ctx.moveTo(-2, -21); ctx.lineTo(2, -21); ctx.stroke();
@@ -451,7 +452,7 @@ class Customer {
 
     // 4. 眼睛
     ctx.fillStyle = CONFIG.COLOR.panBorder;
-    const eyeY = -this.height / 4 - 2 + (this.mouth === 'sad' ? 2 : 0);
+    const eyeY = -this.height / 4 + 1 + (this.mouth === 'sad' ? 2 : 0);
     ctx.beginPath();
     ctx.arc(-7, eyeY, 3, 0, Math.PI * 2);
     ctx.arc(7, eyeY, 3, 0, Math.PI * 2);
@@ -462,12 +463,12 @@ class Customer {
     ctx.strokeStyle = CONFIG.COLOR.panBorder;
     ctx.lineWidth = 2;
     if (this.mouth === 'smile') {
-      ctx.arc(0, -this.height / 4 + 8, 5, 0.2, Math.PI - 0.2);
+      ctx.arc(0, -this.height / 4 + 11, 5, 0.2, Math.PI - 0.2);
     } else if (this.mouth === 'flat') {
-      ctx.moveTo(-5, -this.height / 4 + 10);
-      ctx.lineTo(5, -this.height / 4 + 10);
+      ctx.moveTo(-5, -this.height / 4 + 13);
+      ctx.lineTo(5, -this.height / 4 + 13);
     } else {
-      ctx.arc(0, -this.height / 4 + 15, 5, Math.PI + 0.2, -0.2);
+      ctx.arc(0, -this.height / 4 + 18, 5, Math.PI + 0.2, -0.2);
     }
     ctx.stroke();
 
@@ -478,23 +479,38 @@ class Customer {
 
     // 6. 等待中显示订单 + 耐心条
     if (this.state === 'waiting') {
-      // 订单小料图标
-      ctx.fillStyle = CONFIG.COLOR.panBorder;
-      ctx.font = 'bold 11px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-
       let orderText = '🫓';
       const tmap = { egg: '🥚', ham: '🌭', lettuce: '🥬', crispy: '🥨', scallion: '🟢', sauce: '🟤' };
       this.orderToppings.forEach(tid => {
         orderText += tmap[tid] || '?';
       });
-      ctx.fillText(orderText, 0, this.dislikedTopping ? 15 : this.height / 4);
+
+      const bubbleW = Math.max(54, Math.min(92, 34 + orderText.length * 10));
+      const bubbleH = this.dislikedTopping ? 36 : 26;
+      const bubbleY = -this.height / 2 - bubbleH + 2 + this.orderBubbleOffset;
+      ctx.fillStyle = 'rgba(255,253,248,0.96)';
+      fillRoundRect(ctx, -bubbleW / 2, bubbleY, bubbleW, bubbleH, 8);
+      ctx.strokeStyle = 'rgba(23,35,39,0.32)';
+      ctx.lineWidth = 1.5;
+      strokeRoundRect(ctx, -bubbleW / 2, bubbleY, bubbleW, bubbleH, 8);
+      ctx.fillStyle = 'rgba(255,253,248,0.96)';
+      ctx.beginPath();
+      ctx.moveTo(-8, bubbleY + bubbleH - 1);
+      ctx.lineTo(2, bubbleY + bubbleH + 7);
+      ctx.lineTo(10, bubbleY + bubbleH - 1);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = CONFIG.COLOR.panBorder;
+      ctx.font = 'bold 13px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(orderText, 0, bubbleY + 13);
 
       if (this.dislikedTopping) {
         ctx.fillStyle = '#C62828';
-        ctx.font = 'bold 9px sans-serif';
-        ctx.fillText('忌' + (tmap[this.dislikedTopping] || '?'), 0, 30);
+        ctx.font = 'bold 10px sans-serif';
+        ctx.fillText('忌口 ' + (tmap[this.dislikedTopping] || '?'), 0, bubbleY + 27);
       }
 
       // 耐心条背景

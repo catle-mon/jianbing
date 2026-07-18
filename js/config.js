@@ -52,6 +52,7 @@ module.exports = {
     // 翻面与烹饪
     cookTime: 4000,          // 第一面基础烹饪时长（毫秒）
     secondSideTime: 3000,    // 第二面基础烹饪时长（毫秒）
+    burnGraceTime: 1500,     // 糊饼判定额外宽限时间（毫秒）
     flipHintStart: 0.40,     // 出现翻面提示的开始比例
     flipHintEnd: 0.60,       // 翻面提示结束比例（之后强制可翻）
     flipPerfectStart: 0.46,  // 完美翻面区间开始
@@ -148,7 +149,7 @@ module.exports = {
 
   UPGRADES: [
     { id: 'slot', name: '大锅', desc: '锅位+1', cost: 80, max: 3, value: 1 },
-    { id: 'speed', name: '技巧', desc: '烹饪-15%', cost: 60, max: 5, value: 0.15 },
+    { id: 'speed', name: '技巧', desc: '可翻必完美', cost: 60, max: 1, value: 1 },
     { id: 'patience', name: '微笑', desc: '耐心+20%', cost: 50, max: 5, value: 0.2 }
   ]
 };

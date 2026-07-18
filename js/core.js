@@ -254,8 +254,8 @@ class Game {
 
   // ===================== 升级计算 =====================
 
-  getCookTime() { return CONFIG.GAME.cookTime * (1 - this.upgrades.speed * 0.15); }
-  getSide2Time() { return CONFIG.GAME.secondSideTime * (1 - this.upgrades.speed * 0.15); }
+  getCookTime() { return CONFIG.GAME.cookTime; }
+  getSide2Time() { return CONFIG.GAME.secondSideTime; }
   getPatience() { return CONFIG.GAME.basePatience * (1 + this.upgrades.patience * 0.2); }
 
   getPrice(base) { return base; }
@@ -557,8 +557,8 @@ class Game {
   startPanFlip(pan) {
     const pancake = pan && pan.pancake;
     if (!pancake || pancake.phase !== 'first' || !pancake.needsFlip || this.isPanFlipping(pan)) return false;
-    const wasPerfect = pancake.state === 'perfect';
-    if (!pancake.flip()) return false;
+    const wasPerfect = this.upgrades.speed > 0 || pancake.state === 'perfect';
+    if (!pancake.flip(wasPerfect)) return false;
     this.flipAnimations.push({ pan, pancake, start: Date.now(), duration: 440, perfect: wasPerfect });
     this.spawnText(pan.x, pan.y - 54, wasPerfect ? '完美翻面!' : '翻面!', wasPerfect ? '#F2B705' : '#2D88A8');
     this.spawnParticles(pan.x, pan.y, wasPerfect ? '#F2B705' : '#64B5C4', 4, 9);
@@ -672,7 +672,12 @@ class Game {
         return;
       }
       const targetPan = this.getPanAt(x, y);
-      if (targetPan) this.tryPlaceHeldIngredient(targetPan, false);
+      if (targetPan) {
+        this.tryPlaceHeldIngredient(targetPan, false);
+        this.heldIngredient = null;
+        return;
+      }
+      this.heldIngredient = null;
       return;
     }
 
@@ -778,7 +783,11 @@ class Game {
         return;
       }
       const btn = this.buttons.find(b => b.id === 'batter');
-      if (btn && this.hit(x, y, btn)) { this.onButton(btn); return; }
+      if (btn && this.hit(x, y, btn)) {
+        this.touchStartX = x; this.touchStartY = y; this.touchMoved = false;
+        this.onButton(btn);
+        return;
+      }
       // 直接点空锅位时给出引导提示
       const emptyPan = this.getPanAt(x, y);
       if (emptyPan) this.spawnText(emptyPan.x, emptyPan.y - 50, '先点【面饼】拿面糊', '#FF7043');
@@ -792,7 +801,11 @@ class Game {
         return;
       }
       const eggBtn = this.buttons.find(b => b.id === 'egg');
-      if (eggBtn && this.hit(x, y, eggBtn)) { this.onButton(eggBtn); return; }
+      if (eggBtn && this.hit(x, y, eggBtn)) {
+        this.touchStartX = x; this.touchStartY = y; this.touchMoved = false;
+        this.onButton(eggBtn);
+        return;
+      }
       const pan = this.getPanAt(x, y);
       if (pan) this.spawnText(pan.x, pan.y - 50, '先点【蛋】拿鸡蛋', '#FF7043');
       return;
@@ -861,8 +874,13 @@ class Game {
       // 没有移动就是一次点选；第二次点锅已在 handleTouch 中完成放料。
       if (!this.touchMoved) return;
       const hitPan = this.getPanAt(this.touchX, this.touchY);
-      if (hitPan) this.tryPlaceHeldIngredient(hitPan, false);
-      // 未命中时保留点选状态，下一次可直接点锅位；再次点同一食材可取消。
+      if (hitPan) {
+        this.tryPlaceHeldIngredient(hitPan, false);
+        this.heldIngredient = null;
+        return;
+      }
+      this.heldIngredient = null;
+      this.spawnText(this.touchX, this.touchY - 30, '已放回料台', '#607D8B');
       return;
     }
     
@@ -980,13 +998,18 @@ class Game {
   }
 
   handleTutorialTouchEnd() {
-    // 手持原料：拖到锅位松开 = 下锅/加料；松开位置不对则保留手持（避免一松手就没了）
+    // 手持原料：拖到锅位松开 = 下锅/加料；松开位置不对则回到料台
     if (this.heldIngredient) {
       // 点选模式在按下时处理，抬手时只处理真正发生过移动的拖动。
       if (!this.touchMoved) return;
       const pan = this.getPanAt(this.touchX, this.touchY);
-      if (pan && this.tryPlaceHeldIngredient(pan, true)) return;
-      this.spawnText(this.touchX, this.touchY - 30, '拖到锅位上松开', '#FF7043');
+      if (pan) {
+        this.tryPlaceHeldIngredient(pan, true);
+        this.heldIngredient = null;
+        return;
+      }
+      this.heldIngredient = null;
+      this.spawnText(this.touchX, this.touchY - 30, '已放回料台', '#607D8B');
       return;
     }
     if (this.tutorial.step !== 4 || !this.heldPancake) return;
@@ -1079,7 +1102,7 @@ class Game {
       this.resources.gold -= up.cost;
       this.upgrades[btn.upId]++;
       this.spawnParticles(btn.x + btn.w / 2, btn.y + btn.h / 2, '#AB47BC', 4, 10);
-      this.spawnText(btn.x + btn.w / 2, btn.y - 10, btn.label + '+1', '#AB47BC');
+      this.spawnText(btn.x + btn.w / 2, btn.y - 10, btn.upId === 'speed' ? '技巧生效' : btn.label + '+1', '#AB47BC');
       if (btn.upId === 'slot') {
         const oldPans = this.pans.map(p => p.pancake);
         this.initPans();
@@ -1203,11 +1226,12 @@ class Game {
 
     // ---------- 顾客区域 ----------
     const customerGap = this.customers.length > 1
-      ? Math.min(65, (w - 80) / (this.customers.length - 1))
+      ? Math.min(70, (w - 70) / (this.customers.length - 1))
       : 0;
     this.customers.forEach((c, i) => {
-      c.x = this.customers.length === 1 ? Math.min(100, w / 2) : 40 + i * customerGap;
-      c.y = 140;
+      c.x = this.customers.length === 1 ? Math.min(110, w / 2) : 35 + i * customerGap;
+      c.y = 158;
+      c.orderBubbleOffset = this.customers.length > 3 ? (i % 2) * 16 : 0;
       c.draw(ctx);
     });
 
@@ -1800,12 +1824,12 @@ class Game {
 
     ctx.fillStyle = '#3E2723'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     const stepTexts = [
-      '先看懂顾客的订单\n顾客身上的图标就是所需配料\n下方耐心条会由绿变黄、变红\n超时离开会扣人气\n这一单是：面饼 + 鸡蛋',
+      '先看懂顾客的订单\n顾客头顶气泡显示所需配料\n下方耐心条会由绿变黄、变红\n超时离开会扣人气\n这一单是：面饼 + 鸡蛋',
       '第一步 · 面糊下锅\n方式A：按住【面饼】拖到空锅\n方式B：点【面饼】，再点空锅\n发光虚线框就是下一目标',
       '第二步 · 翻面前加鸡蛋\n拖【蛋】到锅，或先点【蛋】再点锅\n鸡蛋是唯一需要翻面前加入的配料\n同一种配料不能重复添加',
       '第三步 · 看火翻面\n★出现时点击煎饼\n金色火候区间翻面收益更高\n教程不会煎糊，可以先观察',
       '第四步 · 出锅上菜\n✓出现代表第二面火候最佳\n点煎饼再点顾客，或直接拖给顾客\n成品配料必须与订单完全一致',
-      '第一单完成\n蛋在翻面前加，其他配料翻面后加\n菜脆葱酱用【小料进货】统一补充\n红色忌口绝对不能加入\n微笑加耐心，大锅增加锅位'
+      '第一单完成\n蛋在翻面前加，其他配料翻面后加\n菜脆葱酱用【小料进货】统一补充\n红色忌口绝对不能加入\n技巧让本局可翻面时必定完美'
     ];
     const lines = stepTexts[step].split('\n');
     ctx.font = 'bold ' + (isBookend ? 14 : 13) + 'px sans-serif';

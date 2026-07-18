@@ -10,6 +10,7 @@ global.wx = {
 
 const assert = require('assert');
 const Game = require('./js/core.js');
+const CONFIG = require('./js/config.js');
 const { Pancake } = require('./js/entities.js');
 
 let passed = 0;
@@ -438,6 +439,7 @@ test('21. 资源、价格和升级名称使用明确一致的显示格式', () =
   assert.ok(ctx.texts.includes('技巧'));
   assert.ok(!ctx.texts.includes('快手'));
   assert.ok(!ctx.texts.includes('招牌'));
+  assert.ok(ctx.texts.some(text => text.includes('可翻必完美')));
   assert.ok(ctx.texts.some(text => text.includes('耐心+20%')));
   assert.ok(ctx.texts.includes('菜'));
   assert.ok(ctx.texts.includes('第3波解锁'));
@@ -621,6 +623,83 @@ test('29. 删除招牌后会通过历史版本清空一次旧排行', () => {
     wx.getStorageSync = originalGet;
     wx.setStorageSync = originalSet;
   }
+});
+
+test('30. 糊饼判定在正反面都延后 1.5 秒', () => {
+  const firstSide = new Pancake(4000, 3000);
+  firstSide.update(4000);
+  assert.notStrictEqual(firstSide.state, 'burnt');
+  firstSide.update(CONFIG.GAME.burnGraceTime - 1);
+  assert.notStrictEqual(firstSide.state, 'burnt');
+  firstSide.update(1);
+  assert.strictEqual(firstSide.state, 'burnt');
+
+  const secondSide = new Pancake(4000, 3000);
+  secondSide.phase = 'second';
+  secondSide.update(3000);
+  assert.notStrictEqual(secondSide.state, 'burnt');
+  secondSide.update(CONFIG.GAME.burnGraceTime);
+  assert.strictEqual(secondSide.state, 'burnt');
+});
+
+test('31. 手持配料拖拽到无效位置或错误锅位后会自动回到料台', () => {
+  const game = new Game(null, 375, 667);
+  game.startGame();
+  const ham = buttonCenter(game, 'ham');
+  const startHam = game.resources.ham;
+  game.handleTouch(ham.x, ham.y);
+  game.handleTouchMove(20, 420);
+  game.handleTouchEnd();
+  assert.strictEqual(game.heldIngredient, null);
+  assert.strictEqual(game.resources.ham, startHam);
+  assert.strictEqual(game.floatingTexts.at(-1).text, '已放回料台');
+
+  const batter = buttonCenter(game, 'batter');
+  const pan = panCenter(game);
+  game.handleTouch(batter.x, batter.y);
+  game.handleTouchMove(pan.x, pan.y);
+  game.handleTouchEnd();
+  game.handleTouch(ham.x, ham.y);
+  game.handleTouchMove(pan.x, pan.y);
+  game.handleTouchEnd();
+  assert.strictEqual(game.heldIngredient, null);
+  assert.strictEqual(game.resources.ham, startHam);
+  assert.strictEqual(game.floatingTexts.at(-1).text, '肠需要翻面后加入');
+});
+
+test('32. 技巧购买后本局可翻面阶段必定完美，过早仍不能翻', () => {
+  const game = new Game(null, 375, 667);
+  game.startGame();
+  game.resources.gold = 100;
+  const skill = game.buttons.find(button => button.id === 'upSpeed');
+  game.handleTouch(skill.x + skill.w / 2, skill.y + skill.h / 2);
+  assert.strictEqual(game.upgrades.speed, 1);
+  assert.strictEqual(game.getCookTime(), CONFIG.GAME.cookTime);
+
+  const pan = game.pans[0];
+  const early = new Pancake(game.getCookTime(), game.getSide2Time());
+  pan.pancake = early;
+  early.elapsed = early.cookTime * 0.2;
+  early.update(0);
+  assert.strictEqual(game.startPanFlip(pan), false);
+  assert.strictEqual(early.phase, 'first');
+
+  const ready = new Pancake(game.getCookTime(), game.getSide2Time());
+  pan.pancake = ready;
+  ready.elapsed = ready.cookTime * 0.41;
+  ready.update(0);
+  assert.strictEqual(ready.state, 'cooking');
+  assert.strictEqual(game.startPanFlip(pan), true);
+  assert.strictEqual(ready.flipPerfect, true);
+});
+
+test('33. 顾客订单绘制为独立气泡，顾客本体尺寸更清楚', () => {
+  const ctx = createMockContext();
+  const game = new Game(ctx, 375, 667);
+  game.startTutorial();
+  game.render();
+  assert.ok(game.customers[0].width >= 68);
+  assert.ok(ctx.texts.includes('🫓🥚'));
 });
 
 console.log(results.join('\n'));
