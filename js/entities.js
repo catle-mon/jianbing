@@ -10,7 +10,7 @@
  */
 
 const CONFIG = require('./config.js');
-const { fillRoundRect, strokeRoundRect } = require('./utils.js');
+const { fillRoundRect, strokeRoundRect, drawIngredientIcon } = require('./utils.js');
 
 // ===================== Pancake 煎饼类 =====================
 
@@ -199,24 +199,8 @@ class Pancake {
       { x: 0, y: 16 }
     ];
     this.toppings.forEach((tid, i) => {
-      const tcfg = toppingCfg.find(t => t.id === tid);
       const pos = positions[i % positions.length];
-      ctx.fillStyle = tcfg ? CONFIG.COLOR[tcfg.colorKey] : '#999';
-      if (tid === 'egg') {
-        ctx.beginPath(); ctx.arc(pos.x, pos.y, 7, 0, Math.PI * 2); ctx.fill();
-      } else if (tid === 'ham') {
-        ctx.fillRect(pos.x - 8, pos.y - 4, 16, 8);
-      } else if (tid === 'lettuce') {
-        ctx.beginPath(); ctx.ellipse(pos.x, pos.y, 9, 5, 0, 0, Math.PI * 2); ctx.fill();
-      } else if (tid === 'crispy') {
-        ctx.fillRect(pos.x - 7, pos.y - 7, 14, 14);
-      } else if (tid === 'scallion') {
-        ctx.beginPath(); ctx.arc(pos.x, pos.y, 4, 0, Math.PI * 2); ctx.fill();
-      } else if (tid === 'sauce') {
-        ctx.beginPath(); ctx.arc(pos.x, pos.y, 5, 0, Math.PI * 2); ctx.fill();
-      } else {
-        ctx.beginPath(); ctx.arc(pos.x, pos.y, 6, 0, Math.PI * 2); ctx.fill();
-      }
+      drawIngredientIcon(ctx, tid, pos.x, pos.y, 16);
     });
 
     // 3. 状态图标
@@ -256,6 +240,7 @@ class Customer {
     this.state = 'waiting'; // waiting / eating / leaving / retry
     this.animTime = 0;
     this.shake = 0;
+    this.feedbackShake = 0;
     this.mouth = 'smile';
     this.typeInfo = typeInfo; // { id, name, color, patienceMult }
     this.dislikedTopping = dislikedTopping || null;
@@ -266,6 +251,7 @@ class Customer {
   }
 
   update(dt) {
+    if (this.feedbackShake > 0) this.feedbackShake = Math.max(0, this.feedbackShake - dt);
     if (this.state === 'eating') {
       this.eatingTimer += dt;
       if (this.eatingTimer > 1500) {
@@ -391,7 +377,8 @@ class Customer {
 
   draw(ctx) {
     ctx.save();
-    ctx.translate(this.x + this.shake, this.y);
+    const feedbackOffset = this.feedbackShake > 0 ? Math.sin(Date.now() * 0.055) * 4 : 0;
+    ctx.translate(this.x + this.shake + feedbackOffset, this.y);
 
     const bodyColor = this.typeInfo ? this.typeInfo.color : CONFIG.COLOR.customerBody;
     const typeId = this.typeInfo ? this.typeInfo.id : 'normal';
@@ -479,14 +466,10 @@ class Customer {
 
     // 6. 等待中显示订单 + 耐心条
     if (this.state === 'waiting') {
-      let orderText = '🫓';
-      const tmap = { egg: '🥚', ham: '🌭', lettuce: '🥬', crispy: '🥨', scallion: '🟢', sauce: '🟤' };
-      this.orderToppings.forEach(tid => {
-        orderText += tmap[tid] || '?';
-      });
-
-      const bubbleW = Math.max(54, Math.min(92, 34 + orderText.length * 10));
-      const bubbleH = this.dislikedTopping ? 36 : 26;
+      const orderIds = ['batter', ...this.orderToppings];
+      const iconSize = 16;
+      const bubbleW = Math.max(60, Math.min(110, 20 + orderIds.length * 20));
+      const bubbleH = this.dislikedTopping ? 38 : 28;
       const bubbleY = -this.height / 2 - bubbleH + 2 + this.orderBubbleOffset;
       ctx.fillStyle = 'rgba(255,253,248,0.96)';
       fillRoundRect(ctx, -bubbleW / 2, bubbleY, bubbleW, bubbleH, 8);
@@ -501,16 +484,29 @@ class Customer {
       ctx.closePath();
       ctx.fill();
 
-      ctx.fillStyle = CONFIG.COLOR.panBorder;
-      ctx.font = 'bold 13px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(orderText, 0, bubbleY + 13);
+      const iconGap = 18;
+      const rowY = bubbleY + (this.dislikedTopping ? 13 : 14);
+      const startX = -((orderIds.length - 1) * iconGap) / 2;
+      orderIds.forEach((tid, index) => {
+        drawIngredientIcon(ctx, tid, startX + index * iconGap, rowY, iconSize);
+      });
 
       if (this.dislikedTopping) {
-        ctx.fillStyle = '#C62828';
-        ctx.font = 'bold 10px sans-serif';
-        ctx.fillText('忌口 ' + (tmap[this.dislikedTopping] || '?'), 0, bubbleY + 27);
+        const dislikeY = bubbleY + 29;
+        drawIngredientIcon(ctx, this.dislikedTopping, 0, dislikeY, 13);
+        ctx.strokeStyle = 'rgba(198,40,40,0.82)';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.arc(0, dislikeY, 8.3, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(198,40,40,0.9)';
+        ctx.lineWidth = 1.8;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(-5.2, dislikeY + 5.2);
+        ctx.lineTo(5.2, dislikeY - 5.2);
+        ctx.stroke();
+        ctx.lineCap = 'butt';
       }
 
       // 耐心条背景

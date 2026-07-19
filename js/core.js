@@ -14,7 +14,7 @@
 
 const CONFIG = require('./config.js');
 const { Pancake, Customer, Particle } = require('./entities.js');
-const { fillRoundRect, strokeRoundRect } = require('./utils.js');
+const { fillRoundRect, strokeRoundRect, drawIngredientIcon, drawActionIcon } = require('./utils.js');
 const HISTORY_VERSION = 2;
 
 class Game {
@@ -24,6 +24,7 @@ class Game {
     this.height = height;
     this.state = 'menu';       // menu / tutorial / playing / gameover / paused / influencer / catalog
     this.topOffset = 28;
+    this.gameTopOffset = height < 620 ? 34 : 82;
     this.lastTime = Date.now();
     this.touchX = 0;
     this.touchY = 0;
@@ -132,6 +133,12 @@ class Game {
     this.heldPancake = null;
     this.heldFromPan = -1;
     this.heldIngredient = null; // 手持原料（拖动上锅）
+    this.shopOpen = false;
+    this.shopButtons = [];
+    this.upgradeButtons = [];
+    this.purchaseBtn = null;
+    this.shopCloseBtn = null;
+    this.feedbackAnimations = [];
     this.score = 0;
     this.historySaved = false;
 
@@ -162,7 +169,7 @@ class Game {
     const baseSlots = 2 + this.upgrades.slot;
     this.pans = [];
     // 锅位在屏幕中上部，预留按钮空间
-    const panRatio = this.height < 620 ? 0.34 : 0.36;
+    const panRatio = this.height < 620 ? 0.34 : (this.height < 760 ? 0.46 : 0.43);
     this.panY = Math.min(this.height * panRatio, this.height - 320);
     // 大圆半径根据锅位数量动态计算，确保能容纳所有锅位
     const totalWidth = (baseSlots - 1) * 70;
@@ -177,16 +184,16 @@ class Game {
 
   initLayout() {
     const w = this.width, h = this.height;
-    const bw = Math.min(68, (w - 40) / 4);
     const tallScreen = h >= 760;
-    const bh = tallScreen ? 32 : 28;
-    const gap = tallScreen ? 6 : 4;
+    const gap = tallScreen ? 8 : 6;
     const cols = 4;
+    const bw = Math.min(82, (w - 42 - gap * (cols - 1)) / cols);
+    const bh = tallScreen ? 52 : 48;
     const startX = (w - (bw * cols + gap * (cols - 1))) / 2;
     // 长屏把操作区向下展开，短屏仍以不遮挡教程为优先。
     const minimumBaseY = this.panY + this.panRadius + 35;
-    const desiredBaseY = h * 0.56;
-    const baseY = Math.min(Math.max(minimumBaseY, desiredBaseY), h - 230);
+    const desiredBaseY = h * (h < 620 ? 0.57 : 0.60);
+    const baseY = Math.min(Math.max(minimumBaseY, desiredBaseY), h - 185);
 
     this.buttons = [];
     const addBtn = (row, col, id, label, type, extra) => {
@@ -194,41 +201,81 @@ class Game {
     };
 
     const toppingList = CONFIG.GAME.toppings;
-    // Row 0: 【面饼】 + 小料（最多3个，前3种）
+    // Row 0: 原材料（面饼、蛋、肠、菜）
     addBtn(0, 0, 'batter', '面饼', 'ingredient', { need: { batter: 1 }, mode: 'batter' });
-    toppingList.slice(0, 3).forEach((t, i) => {
-      addBtn(0, i + 1, t.id, t.name, 'topping', { toppingId: t.id });
-    });
+    addBtn(0, 1, 'egg', '蛋', 'topping', { toppingId: 'egg' });
+    addBtn(0, 2, 'ham', '肠', 'topping', { toppingId: 'ham' });
+    addBtn(0, 3, 'lettuce', '菜', 'topping', { toppingId: 'lettuce' });
 
-    // Row 1: 买面 + 剩余小料（4~6）
-    addBtn(1, 0, 'buyBatter', '买面', 'buy', { item: 'batter', cost: CONFIG.GAME.toppings[0]?.cost || 2 });
-    toppingList.slice(3, 6).forEach((t, i) => {
-      addBtn(1, i + 1, t.id, t.name, 'topping', { toppingId: t.id });
-    });
+    // Row 1: 剩余小料（脆、葱、酱）
+    addBtn(1, 0, 'crispy', '脆', 'topping', { toppingId: 'crispy' });
+    addBtn(1, 1, 'scallion', '葱', 'topping', { toppingId: 'scallion' });
+    addBtn(1, 2, 'sauce', '酱', 'topping', { toppingId: 'sauce' });
+    this.materialBottom = baseY + bh * 2 + gap;
 
-    // Row 2: 买蛋/买肠/小料统一进货（横跨两格）
-    addBtn(2, 0, 'buyEgg', '买蛋', 'buy', { item: 'egg', cost: 5 });
-    addBtn(2, 1, 'buyHam', '买肠', 'buy', { item: 'ham', cost: 6 });
-    addBtn(2, 2, 'buyToppings', '小料进货', 'buyBundle', {
-      items: CONFIG.GAME.smallToppingIds, cost: 8, buyAmount: 3, unlockWave: 3, w: bw * 2 + gap
-    });
+    const upgradeW = 58;
+    const upgradeH = tallScreen ? 38 : 34;
+    const upgradeGap = 6;
+    const upgradeY = Math.max(this.panY - 16, h < 620 ? 206 : this.gameTopOffset + 188);
+    this.upgradeButtons = [
+      { id: 'upSpeed', label: '技巧', type: 'upgrade', icon: 'speed', upId: 'speed', once: true },
+      { id: 'upPatience', label: '微笑', type: 'upgrade', icon: 'patience', upId: 'patience', once: true },
+      { id: 'upSlot', label: '大锅', type: 'upgrade', icon: 'slot', upId: 'slot', once: true }
+    ].map((btn, index) => ({
+      ...btn,
+      x: 0,
+      y: upgradeY + index * (upgradeH + upgradeGap),
+      w: upgradeW,
+      h: upgradeH
+    }));
 
-    // Row 3: 升级
-    addBtn(3, 0, 'upSpeed', '技巧', 'upgrade', { upId: 'speed' });
-    addBtn(3, 1, 'upPatience', '微笑', 'upgrade', { upId: 'patience' });
-    addBtn(3, 2, 'upSlot', '大锅', 'upgrade', { upId: 'slot' });
-    addBtn(3, 3, 'upContainer', '托盘', 'upgrade', { upId: 'container' });
+    // 底部商店入口
+    const shopEntryH = tallScreen ? 44 : 40;
+    this.purchaseBtn = {
+      id: 'purchase',
+      label: '商店',
+      type: 'shopToggle',
+      x: 0,
+      y: h - shopEntryH,
+      w,
+      h: shopEntryH
+    };
+    this.buttons.push(this.purchaseBtn);
+
+    // 底部购买面板按钮
+    const panelH = h < 620 ? 150 : 166;
+    this.shopPanel = { x: 0, y: h - panelH, w, h: panelH };
+    const shopGap = 8;
+    const shopPadding = 10;
+    const shopBtnH = 42;
+    const shopBtnW = (w - shopPadding * 2 - shopGap * 2) / 3;
+    const shopStartY = this.shopPanel.y + 46;
+    const shopEntries = [
+      { id: 'buyBatter', label: '面糊补货', type: 'buy', icon: 'batter', item: 'batter', cost: CONFIG.GAME.toppings[0]?.cost || 2 },
+      { id: 'buyEgg', label: '鸡蛋补货', type: 'buy', icon: 'egg', item: 'egg', cost: 5 },
+      { id: 'buyHam', label: '肉肠补货', type: 'buy', icon: 'ham', item: 'ham', cost: 6 },
+      { id: 'buyToppings', label: '小料进货', type: 'buyBundle', icon: 'lettuce', items: CONFIG.GAME.smallToppingIds, cost: 8, buyAmount: 3, unlockWave: 3 }
+    ];
+    this.shopButtons = shopEntries.map((item, index) => ({
+      ...item,
+      x: index < 3 ? shopPadding + index * (shopBtnW + shopGap) : shopPadding,
+      y: index < 3 ? shopStartY : shopStartY + shopBtnH + 10,
+      w: index < 3 ? shopBtnW : w - shopPadding * 2,
+      h: shopBtnH
+    }));
+    this.shopCloseBtn = { x: w - 42, y: this.shopPanel.y + 10, w: 28, h: 24, label: '×' };
 
     // 主菜单内容整体居中分布，给历史排行留出固定区域。
     this.menuTop = Math.max(this.topOffset + 12, (h - 460) / 2);
     this.menuBtn = { x: w / 2 - 80, y: this.menuTop + 205, w: 160, h: 50, label: '开始摆摊' };
-    this.rankingToggleBtn = { x: w - 122, y: this.menuTop + 263, w: 104, h: 28 };
-    this.menuRankingTop = this.menuTop + 302;
+    const menuHistoryOffset = h < 620 ? 16 : 25;
+    this.rankingToggleBtn = { x: w - 122, y: this.menuTop + 263 + menuHistoryOffset, w: 104, h: 28 };
+    this.menuRankingTop = this.menuTop + 302 + menuHistoryOffset;
     const secondaryGap = 10;
     const secondaryW = Math.min(160, (w - 42) / 2);
     const secondaryStartX = (w - (secondaryW * 2 + secondaryGap)) / 2;
-    this.reviewTutorialBtn = { x: secondaryStartX, y: this.menuTop + 405, w: secondaryW, h: 40, label: '回顾教程' };
-    this.menuCatalogBtn = { x: secondaryStartX + secondaryW + secondaryGap, y: this.menuTop + 405, w: secondaryW, h: 40, label: '顾客图鉴' };
+    this.reviewTutorialBtn = { x: secondaryStartX, y: this.menuTop + 405 + menuHistoryOffset, w: secondaryW, h: 40, label: '回顾教程' };
+    this.menuCatalogBtn = { x: secondaryStartX + secondaryW + secondaryGap, y: this.menuTop + 405 + menuHistoryOffset, w: secondaryW, h: 40, label: '顾客图鉴' };
     this.restartBtn = { x: w / 2 - 80, y: h / 2 + 62, w: 160, h: 46, label: '再来一次' };
     this.gameOverMenuBtn = { x: w / 2 - 80, y: h / 2 + 120, w: 160, h: 42, label: '返回主界面' };
 
@@ -236,8 +283,9 @@ class Game {
     this.trashCan = { x: w - 58, y: this.panY - 45, w: 50, h: 50, label: '丢弃' };
 
     // 暂停按钮
-    this.pauseBtn = { x: w - 48, y: 48 + this.topOffset, w: 40, h: 30, label: '⏸️' };
-    this.catalogBtn = { x: w - 94, y: 48 + this.topOffset, w: 40, h: 30, label: '📖' };
+    const topControlY = h < 620 ? 48 + this.gameTopOffset : this.gameTopOffset - 36;
+    this.pauseBtn = { x: 62, y: topControlY, w: 40, h: 30, label: '⏸️' };
+    this.catalogBtn = { x: 16, y: topControlY, w: 40, h: 30, label: '📖' };
     this.catalogBackBtn = { x: w / 2 - 70, y: h - 58, w: 140, h: 40, label: '返回' };
 
     // 教程跳过按钮（仅教程状态显示）
@@ -277,19 +325,21 @@ class Game {
 
   startTutorial() {
     this.reset();
+    this.initLayout();
     this.state = 'tutorial';
     this.tutorial.active = true;
     this.tutorial.step = 0;
     this.resources = { gold: 999, batter: 99 };
     CONFIG.GAME.toppings.forEach(t => { this.resources[t.id] = 99; });
     this.tutorialCustomer = new Customer(Date.now(), ['egg'], 999999, Math.min(100, this.width - 40), 100,
-      CONFIG.GAME.customerTypes[0]);
+      CONFIG.GAME.customerTypes[0], 'ham');
     this.customers = [this.tutorialCustomer];
     this.lastTime = Date.now();
   }
 
   startGame() {
     this.reset();
+    this.initLayout();
     this.state = 'playing';
     this.lastSpawnTime = Date.now();
     this.lastTime = Date.now();
@@ -302,6 +352,7 @@ class Game {
     const dt = now - this.lastTime;
     this.lastTime = now;
     this.flipAnimations = this.flipAnimations.filter(a => now - a.start < a.duration);
+    this.feedbackAnimations = this.feedbackAnimations.filter(a => now - a.start < a.duration);
 
     if (this.state === 'tutorial') {
       this.pans.forEach(pan => {
@@ -338,8 +389,12 @@ class Game {
     // 1. 锅位煎饼
     this.pans.forEach(pan => {
       if (pan.pancake && !pan.pancake.held) {
+        const wasBurnt = pan.pancake.state === 'burnt';
         pan.pancake.update(dt);
         pan.pancake.x = pan.x; pan.pancake.y = pan.y;
+        if (!wasBurnt && pan.pancake.state === 'burnt') {
+          this.triggerFeedback('burnt', pan.x, pan.y);
+        }
       }
     });
 
@@ -475,22 +530,35 @@ class Game {
     this.floatingTexts.push({ x, y, text, color, life: 1400, vy: -0.9 });
   }
 
+  triggerFeedback(type, x, y, target) {
+    const durationMap = { perfectFlip: 620, burnt: 720, wrongOrder: 520 };
+    this.feedbackAnimations.push({
+      type,
+      x,
+      y,
+      target: target || null,
+      start: Date.now(),
+      duration: durationMap[type] || 560
+    });
+    if (type === 'wrongOrder' && target) target.feedbackShake = 420;
+  }
+
   getPanAt(x, y) {
     return this.pans.find(pan => Math.hypot(x - pan.x, y - pan.y) < 45) || null;
   }
 
   getTrayLayout() {
-    const slotW = 50;
-    const slotH = 45;
+    const slotW = 58;
+    const slotH = 50;
     const slotGap = 8;
-    const controlsBottom = this.buttons.length
-      ? Math.max(...this.buttons.map(button => button.y + button.h))
-      : this.height - 76;
-    const trayY = controlsBottom + 34;
-    const totalW = this.containerMax > 0
-      ? this.containerMax * slotW + (this.containerMax - 1) * slotGap
-      : 0;
-    return { trayY, slotW, slotH, slotGap, totalW, startX: (this.width - totalW) / 2 };
+    const slotCount = this.containerMax > 0 ? this.containerMax : 2;
+    const trayY = (this.materialBottom || this.height - 180) + 28;
+    const totalW = slotCount * slotW + (slotCount - 1) * slotGap;
+    const startX = (this.width - totalW) / 2;
+    const trayX = startX - 11;
+    const trayW = totalW + 22;
+    const trayH = slotH + 18;
+    return { trayY, slotW, slotH, slotGap, totalW, startX, slotCount, trayX, trayW, trayH };
   }
 
   tryPlaceHeldIngredient(pan, tutorialMode) {
@@ -562,6 +630,7 @@ class Game {
     this.flipAnimations.push({ pan, pancake, start: Date.now(), duration: 440, perfect: wasPerfect });
     this.spawnText(pan.x, pan.y - 54, wasPerfect ? '完美翻面!' : '翻面!', wasPerfect ? '#F2B705' : '#2D88A8');
     this.spawnParticles(pan.x, pan.y, wasPerfect ? '#F2B705' : '#64B5C4', 4, 9);
+    if (wasPerfect) this.triggerFeedback('perfectFlip', pan.x, pan.y);
     return true;
   }
 
@@ -655,6 +724,35 @@ class Game {
 
     if (this.hit(x, y, this.catalogBtn)) { this.openCatalog('playing'); return; }
     if (this.hit(x, y, this.pauseBtn)) { this.state = 'paused'; return; }
+    if (this.state === 'playing' && this.shopOpen) {
+      if (this.hit(x, y, this.shopCloseBtn)) { this.shopOpen = false; return; }
+      if (!this.hit(x, y, this.shopPanel)) { this.shopOpen = false; return; }
+      for (const btn of this.shopButtons) {
+        if (this.hit(x, y, btn)) { this.onButton(btn); return; }
+      }
+      return;
+    }
+    if (!this.heldPancake && !this.heldIngredient) {
+      for (const btn of this.upgradeButtons) {
+        if (this.hit(x, y, btn)) { this.onButton(btn); return; }
+      }
+      const tray = this.getTrayLayout();
+      const trayRect = { x: tray.trayX - 8, y: tray.trayY - 20, w: tray.trayW + 16, h: tray.trayH + 28 };
+      if (this.containerMax <= 0 && this.hit(x, y, trayRect)) {
+        this.onButton({
+          id: 'upContainer',
+          label: '托盘',
+          type: 'upgrade',
+          icon: 'container',
+          upId: 'container',
+          x: trayRect.x,
+          y: trayRect.y,
+          w: trayRect.w,
+          h: trayRect.h
+        });
+        return;
+      }
+    }
     if (this.heldPancake) return;
     if (this.heldIngredient) {
       // 点选模式：再次点击锅位直接放料；点击当前食材按钮可取消选择。
@@ -757,21 +855,37 @@ class Game {
     this.touchX = x; this.touchY = y;
     const step = this.tutorial.step;
 
-    // 任意练习步骤可跳过教程（总结页除外）
-    if (step < 5 && this.tutorialSkipBtn && this.hit(x, y, this.tutorialSkipBtn)) {
+    // 任意练习步骤可跳过教程（最终总结页除外）
+    if (step < 8 && this.tutorialSkipBtn && this.hit(x, y, this.tutorialSkipBtn)) {
       this.finishTutorial();
       return;
     }
 
-    // 步骤0先看懂订单；步骤5完成后开始营业
+    // 步骤0先看懂订单；步骤5~8为补充说明和总结
     if (step === 0) {
       const btn = this.tutorialContinueBtn;
       if (btn && this.hit(x, y, btn)) this.tutorial.step = 1;
       return;
     }
-    if (step === 5) {
+    if (step === 6) {
+      if (!this.shopOpen && this.hit(x, y, this.purchaseBtn)) {
+        this.shopOpen = true;
+        this.spawnText(this.width / 2, this.purchaseBtn.y - 14, '商店打开了', '#2D88A8');
+        return;
+      }
       const btn = this.tutorialContinueBtn;
-      if (btn && this.hit(x, y, btn)) this.finishTutorial();
+      if (this.shopOpen && btn && this.hit(x, y, btn)) {
+        this.shopOpen = false;
+        this.tutorial.step = 7;
+      }
+      return;
+    }
+    if (step >= 5) {
+      const btn = this.tutorialContinueBtn;
+      if (btn && this.hit(x, y, btn)) {
+        if (step < 8) this.tutorial.step++;
+        else this.finishTutorial();
+      }
       return;
     }
 
@@ -949,6 +1063,9 @@ class Game {
       }
       this.spawnText(target.x, target.y - 20, result.text, result.gold > 0 ? '#66BB6A' : '#EF5350');
       this.spawnParticles(target.x, target.y, result.gold > 0 ? '#FFD700' : '#555', result.gold > 0 ? 5 : 2, result.gold > 0 ? 12 : 6);
+      if (result.gold <= 0 && result.popularity === CONFIG.GAME.popularityWrong) {
+        this.triggerFeedback('wrongOrder', target.x, target.y - 22, target);
+      }
 
       // 处理人气
       let popGain = result.popularity;
@@ -1049,6 +1166,11 @@ class Game {
   // ===================== 按钮逻辑 =====================
 
   onButton(btn) {
+    if (btn.type === 'shopToggle') {
+      this.shopOpen = !this.shopOpen;
+      return;
+    }
+
     if (btn.type === 'ingredient') {
       // 点击面饼按钮：生成手持面饼原料
       for (const [res, need] of Object.entries(btn.need)) { if (this.resources[res] < need) return; }
@@ -1098,7 +1220,8 @@ class Game {
         return;
       }
       const up = CONFIG.UPGRADES.find(u => u.id === btn.upId);
-      if (!up || this.upgrades[btn.upId] >= up.max || this.resources.gold < up.cost) return;
+      const maxLevel = btn.once ? 1 : up?.max;
+      if (!up || this.upgrades[btn.upId] >= maxLevel || this.resources.gold < up.cost) return;
       this.resources.gold -= up.cost;
       this.upgrades[btn.upId]++;
       this.spawnParticles(btn.x + btn.w / 2, btn.y + btn.h / 2, '#AB47BC', 4, 10);
@@ -1144,20 +1267,23 @@ class Game {
   renderGame(ctx) {
     const w = this.width, h = this.height;
     const controlsY = (this.buttons[0] ? this.buttons[0].y : h - 210) - 14;
+    const hudTop = this.gameTopOffset;
+    const wallBottom = h < 620 ? 198 : Math.max(198, hudTop + 180);
+    const wallGridTop = h < 620 ? 80 : hudTop + 54;
 
     // ---------- 摊位空间：冷色墙面、暖色台面、浅色操作区 ----------
     ctx.fillStyle = CONFIG.COLOR.wall;
-    ctx.fillRect(0, 0, w, 198);
+    ctx.fillRect(0, 0, w, wallBottom);
     ctx.strokeStyle = CONFIG.COLOR.wallLine;
     ctx.lineWidth = 1;
     for (let x = 0; x < w; x += 48) {
-      ctx.beginPath(); ctx.moveTo(x, 80); ctx.lineTo(x, 198); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x, wallGridTop); ctx.lineTo(x, wallBottom); ctx.stroke();
     }
-    for (let y = 112; y < 198; y += 34) {
+    for (let y = wallGridTop + 32; y < wallBottom; y += 34) {
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
     }
     ctx.fillStyle = CONFIG.COLOR.counter;
-    ctx.fillRect(0, 198, w, controlsY - 198);
+    ctx.fillRect(0, wallBottom, w, controlsY - wallBottom);
     ctx.fillStyle = CONFIG.COLOR.counterEdge;
     ctx.fillRect(0, controlsY - 7, w, 9);
     ctx.fillStyle = CONFIG.COLOR.panel;
@@ -1165,30 +1291,24 @@ class Game {
 
     // ---------- 顶部 HUD ----------
     ctx.fillStyle = 'rgba(255,255,255,0.92)';
-    ctx.fillRect(0, this.topOffset, w, 52);
+    ctx.fillRect(0, hudTop, w, 52);
     ctx.fillStyle = 'rgba(23,35,39,0.16)';
-    ctx.fillRect(0, this.topOffset + 52, w, 2);
+    ctx.fillRect(0, hudTop + 52, w, 2);
     ctx.fillStyle = CONFIG.COLOR.text;
     ctx.font = 'bold 13px sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
 
-    // 第一行：金币 + 材料
-    ctx.fillText('💰×' + this.resources.gold, 10, 16 + this.topOffset);
-    const itemStartX = Math.max(82, w * 0.24);
-    const itemGap = (w - 55 - itemStartX) / 2;
-    ctx.fillText('面×' + this.resources.batter, itemStartX, 16 + this.topOffset);
-    CONFIG.GAME.toppings.slice(0, 2).forEach((t, index) => {
-      ctx.fillText(t.name + '×' + this.resources[t.id], itemStartX + (index + 1) * itemGap, 16 + this.topOffset);
-    });
+    // 第一行：金币
+    ctx.fillText('💰×' + this.resources.gold, 10, 16 + hudTop);
 
     // 第二行：波次 + 实时得分 + 人气 + 接待 + 倍数
-    const metricY = 38 + this.topOffset;
+    const metricY = 38 + hudTop;
     const metricFontSize = w < 350 ? 11 : 12;
-    const scoreX = w * 0.16;
-    const popularityX = w * 0.34;
-    const servedX = w * 0.58;
-    const streakX = w * 0.80;
+    const scoreX = w * 0.18;
+    const popularityX = w * 0.40;
+    const servedX = w * 0.64;
+    const streakX = w * 0.84;
     ctx.fillStyle = '#5D4037';
     ctx.font = metricFontSize + 'px sans-serif';
     ctx.fillText(`第${this.wave}波`, 10, metricY);
@@ -1230,7 +1350,7 @@ class Game {
       : 0;
     this.customers.forEach((c, i) => {
       c.x = this.customers.length === 1 ? Math.min(110, w / 2) : 35 + i * customerGap;
-      c.y = 158;
+      c.y = h < 620 ? 158 : hudTop + 132;
       c.orderBubbleOffset = this.customers.length > 3 ? (i % 2) * 16 : 0;
       c.draw(ctx);
     });
@@ -1251,6 +1371,8 @@ class Game {
     ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(w / 2 - 4, panY - 4, this.panRadius - 10, Math.PI * 1.08, Math.PI * 1.82); ctx.stroke();
 
+    this.renderPanTargetHighlights(ctx);
+
     // ---------- 锅位与煎饼 ----------
     this.pans.forEach(pan => {
       const flipAnimation = this.flipAnimations.find(a => a.pan === pan);
@@ -1267,8 +1389,9 @@ class Game {
     });
     if (this.heldPancake) this.heldPancake.draw(ctx);
 
-    // ---------- 容器（购买后才显示）----------
-    if (this.containerMax > 0) this.renderContainer(ctx);
+    // ---------- 桌面设备 ----------
+    this.renderUpgradeButtons(ctx);
+    this.renderContainer(ctx);
 
     // ---------- 按钮区 ----------
     this.buttons.forEach(btn => {
@@ -1276,6 +1399,7 @@ class Game {
       let color = CONFIG.COLOR.btn;
       if (btn.type === 'upgrade') color = '#AB47BC';
       else if (btn.type === 'buy' || btn.type === 'buyBundle') color = '#42A5F5';
+      else if (btn.type === 'shopToggle') color = '#D9C4A8';
       else if (btn.type === 'topping') color = CONFIG.COLOR.btnTopping;
 
       if (btn.type === 'ingredient') {
@@ -1286,24 +1410,8 @@ class Game {
         // 未解锁
         const tcfg = CONFIG.GAME.toppings.find(t => t.id === btn.toppingId);
         if (tcfg && tcfg.unlockWave > this.wave) disabled = true;
-      } else if (btn.type === 'buy') {
-        if (this.resources.gold < btn.cost) disabled = true;
-
-      } else if (btn.type === 'buyBundle') {
-        if (this.wave < btn.unlockWave || this.resources.gold < btn.cost) disabled = true;
-
-      } else if (btn.type === 'upgrade') {
-        if (btn.upId === 'container') {
-          const maxLevel = CONFIG.GAME.containerMaxSlots.length - 1;
-          if (this.upgrades.container >= maxLevel) disabled = true;
-          else {
-            const cost = CONFIG.GAME.containerUpgradeCosts[this.upgrades.container];
-            if (this.resources.gold < cost) disabled = true;
-          }
-        } else {
-          const up = CONFIG.UPGRADES.find(u => u.id === btn.upId);
-          if (up && (this.upgrades[btn.upId] >= up.max || this.resources.gold < up.cost)) disabled = true;
-        }
+      } else if (btn.type === 'shopToggle') {
+        disabled = false;
       }
 
       if (disabled) color = CONFIG.COLOR.btnDisabled;
@@ -1312,69 +1420,60 @@ class Game {
         const tcfg = CONFIG.GAME.toppings.find(t => t.id === btn.toppingId);
         if (tcfg && tcfg.unlockWave > this.wave) {
           color = '#E0E0E0';
-          btn._lockedLabel = btn.label;
-        } else {
-          btn._lockedLabel = null;
         }
       }
 
-      ctx.fillStyle = color;
-      fillRoundRect(ctx, btn.x, btn.y, btn.w, btn.h, 8);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
       const selectedId = this.heldIngredient
         ? (this.heldIngredient.type === 'batter' ? 'batter' : this.heldIngredient.toppingId)
         : null;
+
+      if (btn.type === 'ingredient' || btn.type === 'topping') {
+        this.renderIngredientTray(ctx, btn, disabled);
+      } else {
+        ctx.fillStyle = color;
+        fillRoundRect(ctx, btn.x, btn.y, btn.w, btn.h, 8);
+      }
+
       if (selectedId === btn.id) {
         ctx.strokeStyle = '#F2B705'; ctx.lineWidth = 4;
         strokeRoundRect(ctx, btn.x - 2, btn.y - 2, btn.w + 4, btn.h + 4, 8);
       }
-      ctx.fillStyle = '#FFF';
-      ctx.font = 'bold 12px sans-serif';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      const label = btn._lockedLabel || btn.label;
-      ctx.fillText(label, btn.x + btn.w / 2, btn.y + btn.h / 2 - 5);
-
-      // 副标签
-      ctx.font = '9px sans-serif';
+      const centerX = btn.x + btn.w / 2;
+      const iconY = btn.y + (btn.type === 'shopToggle' ? btn.h / 2 : btn.h * 0.34);
       if (btn.type === 'ingredient') {
-        const resTexts = [];
-        for (const [res, need] of Object.entries(btn.need)) {
-          const resName = res === 'batter' ? '面' : res;
-          resTexts.push(resName + this.resources[res]);
-        }
-        ctx.fillStyle = disabled ? '#EF5350' : '#FFEB3B';
-        ctx.fillText(resTexts.join(' '), btn.x + btn.w / 2, btn.y + btn.h / 2 + 8);
+        drawIngredientIcon(ctx, 'batter', centerX, iconY, 26);
+        ctx.fillStyle = this.resources.batter > 0 ? 'rgba(255,248,234,0.86)' : 'rgba(239,83,80,0.18)';
+        fillRoundRect(ctx, centerX - 18, btn.y + btn.h - 14, 36, 12, 6);
+        ctx.fillStyle = this.resources.batter > 0 ? CONFIG.COLOR.text : '#D95F4C';
+        ctx.font = 'bold 10px sans-serif';
+        ctx.fillText('×' + this.resources.batter, centerX, btn.y + btn.h - 7);
       } else if (btn.type === 'topping') {
         const qty = this.resources[btn.toppingId] || 0;
         const tcfg = CONFIG.GAME.toppings.find(t => t.id === btn.toppingId);
         const locked = tcfg && tcfg.unlockWave > this.wave;
-        ctx.fillStyle = disabled ? '#EF5350' : '#FFEB3B';
-        ctx.font = locked ? '8px sans-serif' : '9px sans-serif';
-        ctx.fillText(locked ? '第' + tcfg.unlockWave + '波解锁' : '×' + qty, btn.x + btn.w / 2, btn.y + btn.h / 2 + 8);
-      } else if (btn.type === 'buy') {
-        ctx.fillStyle = disabled ? '#EEE' : '#FFEB3B';
-        const amount = btn.item === 'batter' ? 5 : 3;
-        ctx.fillText('💰' + btn.cost + '  +' + amount, btn.x + btn.w / 2, btn.y + btn.h / 2 + 8);
-
-      } else if (btn.type === 'buyBundle') {
-        ctx.fillStyle = disabled ? '#EEE' : '#FFEB3B';
-        ctx.font = '8px sans-serif';
-        const detail = this.wave < btn.unlockWave ? '第' + btn.unlockWave + '波开放' : '💰' + btn.cost + '  四种各+' + btn.buyAmount;
-        ctx.fillText(detail, btn.x + btn.w / 2, btn.y + btn.h / 2 + 8);
-
-      } else if (btn.type === 'upgrade') {
-        ctx.font = '8px sans-serif';
-        if (btn.upId === 'container') {
-          const maxLevel = CONFIG.GAME.containerMaxSlots.length - 1;
-          const lvl = this.upgrades.container;
-          ctx.fillStyle = (disabled || lvl >= maxLevel) ? '#EEE' : '#FFEB3B';
-          const detail = lvl >= maxLevel ? 'MAX' : '容量+1·💰' + CONFIG.GAME.containerUpgradeCosts[lvl];
-          ctx.fillText(detail, btn.x + btn.w / 2, btn.y + btn.h / 2 + 8);
+        if (locked) {
+          ctx.globalAlpha = 0.3;
+          drawIngredientIcon(ctx, btn.toppingId, centerX, iconY, 23);
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = '#FF6F61';
+          ctx.font = '8px sans-serif';
+          ctx.fillText('第' + tcfg.unlockWave + '波', centerX, btn.y + btn.h - 7);
         } else {
-          const up = CONFIG.UPGRADES.find(u => u.id === btn.upId);
-          const lvl = this.upgrades[btn.upId];
-          ctx.fillStyle = (disabled || lvl >= up.max) ? '#EEE' : '#FFEB3B';
-          ctx.fillText(lvl >= up.max ? 'MAX' : up.desc + '·💰' + up.cost, btn.x + btn.w / 2, btn.y + btn.h / 2 + 8);
+          drawIngredientIcon(ctx, btn.toppingId, centerX, iconY, 26);
+          ctx.fillStyle = qty > 0 ? 'rgba(255,248,234,0.86)' : 'rgba(239,83,80,0.18)';
+          fillRoundRect(ctx, centerX - 16, btn.y + btn.h - 14, 32, 12, 6);
+          ctx.fillStyle = qty > 0 ? CONFIG.COLOR.text : '#D95F4C';
+          ctx.font = 'bold 10px sans-serif';
+          ctx.fillText('×' + qty, centerX, btn.y + btn.h - 7);
         }
+      } else if (btn.type === 'shopToggle') {
+        drawActionIcon(ctx, 'purchase', centerX - 20, btn.y + btn.h / 2, 18);
+        ctx.fillStyle = '#FFF';
+        ctx.font = 'bold 14px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText('商店', centerX - 2, btn.y + btn.h / 2);
       }
     });
 
@@ -1388,18 +1487,9 @@ class Game {
       ctx.beginPath();
       ctx.arc(0, 0, 20, 0, Math.PI * 2);
       if (ing.type === 'batter') {
-        ctx.fillStyle = '#FFF';
-        ctx.fill();
-        ctx.strokeStyle = '#3E2723'; ctx.lineWidth = 2; ctx.stroke();
-        ctx.fillStyle = '#3E2723'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText('面糊', 0, 0);
+        drawIngredientIcon(ctx, 'batter', 0, 0, 22);
       } else if (ing.type === 'topping') {
-        const tcfg = CONFIG.GAME.toppings.find(t => t.id === ing.toppingId);
-        ctx.fillStyle = tcfg ? CONFIG.COLOR[tcfg.colorKey] : '#999';
-        ctx.fill();
-        ctx.strokeStyle = '#3E2723'; ctx.lineWidth = 2; ctx.stroke();
-        ctx.fillStyle = '#FFF'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(tcfg ? tcfg.name : '?', 0, 0);
+        drawIngredientIcon(ctx, ing.toppingId, 0, 0, 22);
       }
       ctx.restore();
     }
@@ -1415,6 +1505,7 @@ class Game {
 
     // ---------- 粒子 ----------
     this.particles.forEach(p => p.draw(ctx));
+    this.renderFeedbackAnimations(ctx);
 
     // ---------- 垃圾桶 ----------
     this.renderTrashCan(ctx);
@@ -1431,6 +1522,248 @@ class Game {
       ctx.textAlign = 'center';
       ctx.fillText('已选中：点锅位或拖到锅位；再点食材取消', w / 2, h - 15);
     }
+
+    if (this.shopOpen) this.renderShopPanel(ctx);
+  }
+
+  renderFeedbackAnimations(ctx) {
+    const now = Date.now();
+    this.feedbackAnimations.forEach(effect => {
+      const t = Math.max(0, Math.min(1, (now - effect.start) / effect.duration));
+      const alpha = 1 - t;
+      ctx.save();
+      ctx.translate(effect.x, effect.y);
+      if (effect.type === 'perfectFlip') {
+        ctx.strokeStyle = 'rgba(242,183,5,' + (0.75 * alpha) + ')';
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(0, 0, 34 + t * 36, 0, Math.PI * 2); ctx.stroke();
+        ctx.fillStyle = 'rgba(255,215,64,' + (0.9 * alpha) + ')';
+        ctx.font = 'bold 16px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        [[0, -46], [-30, -18], [31, -14]].forEach(([sx, sy], index) => {
+          ctx.fillText('★', sx * (1 + t * 0.12), sy - t * 8 - index * 2);
+        });
+      } else if (effect.type === 'burnt') {
+        ctx.strokeStyle = 'rgba(48,34,28,' + (0.5 * alpha) + ')';
+        ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.arc(0, -8, 26 + t * 22, 0, Math.PI * 2); ctx.stroke();
+        ctx.fillStyle = 'rgba(48,34,28,' + (0.42 * alpha) + ')';
+        [[-14, -26], [2, -34], [16, -24]].forEach(([sx, sy], index) => {
+          ctx.beginPath();
+          ctx.ellipse(sx, sy - t * (18 + index * 4), 5 + t * 5, 8 + t * 7, 0, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      } else if (effect.type === 'wrongOrder') {
+        ctx.strokeStyle = 'rgba(229,57,53,' + (0.9 * alpha) + ')';
+        ctx.lineWidth = 4;
+        ctx.lineCap = 'round';
+        const size = 14 + t * 5;
+        ctx.beginPath();
+        ctx.moveTo(-size, -size);
+        ctx.lineTo(size, size);
+        ctx.moveTo(size, -size);
+        ctx.lineTo(-size, size);
+        ctx.stroke();
+        ctx.lineCap = 'butt';
+        ctx.strokeStyle = 'rgba(229,57,53,' + (0.35 * alpha) + ')';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(0, 0, 24 + t * 12, 0, Math.PI * 2); ctx.stroke();
+      }
+      ctx.restore();
+    });
+  }
+
+  renderPanTargetHighlights(ctx) {
+    const ing = this.heldIngredient;
+    if (!ing) return;
+    const pulse = Math.sin(Date.now() * 0.009) * 0.18 + 0.62;
+    this.pans.forEach(pan => {
+      let valid = false;
+      if (ing.type === 'batter') {
+        valid = !pan.pancake;
+      } else if (ing.type === 'topping' && pan.pancake && !pan.pancake.held) {
+        valid = pan.pancake.canAddTopping(ing.toppingId);
+      }
+      if (!valid) return;
+      ctx.save();
+      ctx.fillStyle = 'rgba(255, 224, 130, 0.18)';
+      ctx.beginPath(); ctx.arc(pan.x, pan.y, 39 + pulse * 3, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(242, 183, 5, ' + pulse + ')';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([7, 6]);
+      ctx.beginPath(); ctx.arc(pan.x, pan.y, 36, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    });
+  }
+
+  renderUpgradeButtons(ctx) {
+    this.upgradeButtons.forEach(btn => {
+      const up = CONFIG.UPGRADES.find(item => item.id === btn.upId);
+      if (!up) return;
+      const bought = this.upgrades[btn.upId] >= 1;
+      const affordable = this.resources.gold >= up.cost;
+      const disabled = bought || !affordable;
+
+      ctx.save();
+      ctx.fillStyle = 'rgba(23,35,39,0.16)';
+      fillRoundRect(ctx, btn.x + 2, btn.y + 3, btn.w, btn.h, 0);
+      ctx.fillStyle = bought ? '#B0BEC5' : (affordable ? '#AB47BC' : CONFIG.COLOR.btnDisabled);
+      fillRoundRect(ctx, btn.x, btn.y, btn.w, btn.h, 0);
+      ctx.strokeStyle = bought ? '#78909C' : CONFIG.COLOR.panBorder;
+      ctx.lineWidth = 2;
+      strokeRoundRect(ctx, btn.x, btn.y, btn.w, btn.h, 0);
+      if (bought) {
+        ctx.fillStyle = 'rgba(255,255,255,0.28)';
+        ctx.fillRect(btn.x + 2, btn.y + 2, btn.w - 4, btn.h - 4);
+      }
+
+      drawActionIcon(ctx, btn.icon || btn.upId, btn.x + 15, btn.y + btn.h / 2, 16);
+      ctx.fillStyle = '#FFF';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(btn.label, btn.x + 27, btn.y + 12);
+      ctx.font = '8px sans-serif';
+      ctx.fillStyle = bought ? '#ECEFF1' : (disabled ? '#EEE' : '#FFEB3B');
+      ctx.fillText(bought ? '已启用' : '💰' + up.cost, btn.x + 27, btn.y + btn.h - 10);
+      ctx.restore();
+    });
+  }
+
+  renderIngredientTray(ctx, btn, disabled) {
+    const x = btn.x;
+    const y = btn.y;
+    const w = btn.w;
+    const h = btn.h;
+    const basketH = h - 18;
+    const locked = btn.type === 'topping'
+      ? CONFIG.GAME.toppings.some(t => t.id === btn.toppingId && t.unlockWave > this.wave)
+      : false;
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(23,35,39,0.18)';
+    fillRoundRect(ctx, x + 2, y + 3, w, basketH, 8);
+
+    const rim = ctx.createLinearGradient(x, y, x, y + h);
+    rim.addColorStop(0, locked ? '#D7DADC' : '#F5F7F7');
+    rim.addColorStop(0.48, locked ? '#BFC5C7' : '#CFD8DC');
+    rim.addColorStop(1, locked ? '#AAB1B4' : '#93A3A8');
+    ctx.fillStyle = rim;
+    fillRoundRect(ctx, x, y, w, basketH, 8);
+
+    const well = ctx.createLinearGradient(x, y + 4, x, y + h - 4);
+    well.addColorStop(0, locked ? '#C8CDCF' : '#E8EEF0');
+    well.addColorStop(0.55, locked ? '#AEB5B8' : '#B8C4C8');
+    well.addColorStop(1, locked ? '#92999C' : '#7F8D92');
+    ctx.fillStyle = well;
+    fillRoundRect(ctx, x + 6, y + 5, w - 12, basketH - 10, 7);
+
+    ctx.fillStyle = disabled || locked ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.46)';
+    fillRoundRect(ctx, x + 8, y + 6, w - 16, Math.max(7, basketH * 0.28), 6);
+    ctx.strokeStyle = disabled || locked ? 'rgba(69,82,87,0.45)' : 'rgba(45,59,64,0.62)';
+    ctx.lineWidth = 1.5;
+    strokeRoundRect(ctx, x + 1, y + 1, w - 2, basketH - 2, 8);
+    ctx.restore();
+  }
+
+  renderShopPanel(ctx) {
+    const w = this.width, h = this.height;
+    const panel = this.shopPanel;
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.26)';
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.fillStyle = CONFIG.COLOR.panel;
+    fillRoundRect(ctx, panel.x, panel.y, panel.w, panel.h + 16, 16);
+    ctx.strokeStyle = CONFIG.COLOR.counterEdge;
+    ctx.lineWidth = 3;
+    strokeRoundRect(ctx, panel.x, panel.y, panel.w, panel.h + 16, 16);
+
+    ctx.fillStyle = CONFIG.COLOR.text;
+    ctx.font = 'bold 18px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('商店', w / 2, panel.y + 24);
+
+    const close = this.shopCloseBtn;
+    ctx.fillStyle = '#FFF';
+    fillRoundRect(ctx, close.x, close.y, close.w, close.h, 7);
+    ctx.strokeStyle = 'rgba(23,35,39,0.35)';
+    ctx.lineWidth = 1.5;
+    strokeRoundRect(ctx, close.x, close.y, close.w, close.h, 7);
+    ctx.fillStyle = CONFIG.COLOR.text;
+    ctx.font = 'bold 16px sans-serif';
+    ctx.fillText(close.label, close.x + close.w / 2, close.y + close.h / 2);
+
+    this.shopButtons.forEach(btn => this.renderShopButton(ctx, btn));
+    ctx.restore();
+  }
+
+  renderShopButton(ctx, btn) {
+    let disabled = false;
+    let color = btn.type === 'upgrade' ? '#AB47BC' : '#42A5F5';
+
+    if (btn.type === 'buy') {
+      if (this.resources.gold < btn.cost) disabled = true;
+    } else if (btn.type === 'buyBundle') {
+      if (this.wave < btn.unlockWave || this.resources.gold < btn.cost) disabled = true;
+    } else if (btn.type === 'upgrade') {
+      if (btn.upId === 'container') {
+        const maxLevel = CONFIG.GAME.containerMaxSlots.length - 1;
+        if (this.upgrades.container >= maxLevel) disabled = true;
+        else if (this.resources.gold < CONFIG.GAME.containerUpgradeCosts[this.upgrades.container]) disabled = true;
+      } else {
+        const up = CONFIG.UPGRADES.find(u => u.id === btn.upId);
+        if (!up || this.upgrades[btn.upId] >= up.max || this.resources.gold < up.cost) disabled = true;
+      }
+    }
+    if (disabled) color = CONFIG.COLOR.btnDisabled;
+
+    ctx.fillStyle = color;
+    fillRoundRect(ctx, btn.x, btn.y, btn.w, btn.h, 8);
+
+    const iconX = btn.x + 24;
+    const iconY = btn.y + btn.h / 2;
+    if (btn.type === 'buyBundle') {
+      ['lettuce', 'crispy', 'scallion', 'sauce'].forEach((tid, index) => {
+        drawIngredientIcon(ctx, tid, btn.x + 20 + index * 14, iconY, 10);
+      });
+    } else if (btn.type === 'buy') {
+      drawIngredientIcon(ctx, btn.icon || btn.item, iconX, iconY, 19);
+    } else if (btn.type === 'upgrade') {
+      drawActionIcon(ctx, btn.icon || btn.upId, iconX, iconY, 19);
+    }
+
+    ctx.fillStyle = '#FFF';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    const textX = btn.type === 'buyBundle' ? btn.x + 84 : btn.x + 48;
+    ctx.fillText(btn.label, textX, btn.y + 15);
+
+    ctx.font = '9px sans-serif';
+    ctx.fillStyle = disabled ? '#EEE' : '#FFEB3B';
+    let detail = '';
+    if (btn.type === 'buy') {
+      const amount = btn.item === 'batter' ? 5 : 3;
+      detail = '💰' + btn.cost + '  +' + amount;
+    } else if (btn.type === 'buyBundle') {
+      detail = this.wave < btn.unlockWave ? '第' + btn.unlockWave + '波开放' : '💰' + btn.cost + '  四种各+' + btn.buyAmount;
+    } else if (btn.type === 'upgrade') {
+      if (btn.upId === 'container') {
+        const maxLevel = CONFIG.GAME.containerMaxSlots.length - 1;
+        const lvl = this.upgrades.container;
+        detail = lvl >= maxLevel ? 'MAX' : '容量+1·💰' + CONFIG.GAME.containerUpgradeCosts[lvl];
+      } else {
+        const up = CONFIG.UPGRADES.find(u => u.id === btn.upId);
+        const lvl = this.upgrades[btn.upId];
+        detail = lvl >= up.max ? 'MAX' : up.desc + '·💰' + up.cost;
+      }
+    }
+    ctx.fillText(detail, textX, btn.y + 31);
   }
 
   renderTrashCan(ctx) {
@@ -1522,63 +1855,65 @@ class Game {
   }
 
   renderContainer(ctx) {
-    if (this.containerMax <= 0) return;
     const w = this.width;
-    const { trayY, slotW, slotH, slotGap, totalW, startX } = this.getTrayLayout();
+    const { trayY, slotW, slotH, slotGap, totalW, startX, slotCount, trayX, trayW, trayH } = this.getTrayLayout();
+    const unlocked = this.containerMax > 0;
 
-    const trayX = startX - 9;
-    const trayW = totalW + 18;
-    const trayH = slotH + 14;
-    const trayActive = !!this.heldPancake &&
+    const trayActive = unlocked && !!this.heldPancake &&
       this.touchY >= trayY - 15 && this.touchY <= trayY + slotH + 15 &&
       this.touchX >= startX - 15 && this.touchX <= startX + totalW + 15;
 
-    // 金属托盘：投影、侧把手、外沿和内槽分层绘制。
+    // 金属托盘：投影、侧把手、外沿和内槽分层绘制；未购买时显示虚线占位。
     ctx.fillStyle = 'rgba(23,35,39,0.2)';
     fillRoundRect(ctx, trayX + 2, trayY + 2, trayW, trayH, 8);
     const trayGradient = ctx.createLinearGradient(trayX, trayY - 8, trayX + trayW, trayY + trayH);
-    trayGradient.addColorStop(0, trayActive ? '#FFE082' : '#E7EFF0');
-    trayGradient.addColorStop(0.5, trayActive ? '#E5B647' : '#AEBCC0');
-    trayGradient.addColorStop(1, trayActive ? '#C88A19' : '#7B8D92');
+    trayGradient.addColorStop(0, trayActive ? '#FFE082' : (unlocked ? '#E7EFF0' : 'rgba(231,239,240,0.28)'));
+    trayGradient.addColorStop(0.5, trayActive ? '#E5B647' : (unlocked ? '#AEBCC0' : 'rgba(174,188,192,0.24)'));
+    trayGradient.addColorStop(1, trayActive ? '#C88A19' : (unlocked ? '#7B8D92' : 'rgba(123,141,146,0.18)'));
     ctx.fillStyle = trayGradient;
     fillRoundRect(ctx, trayX, trayY - 7, trayW, trayH, 8);
-    ctx.strokeStyle = trayActive ? '#8F6414' : '#40545A'; ctx.lineWidth = trayActive ? 3 : 2;
+    ctx.strokeStyle = trayActive ? '#8F6414' : (unlocked ? '#40545A' : 'rgba(64,84,90,0.72)');
+    ctx.lineWidth = trayActive ? 3 : 2;
+    if (!unlocked) ctx.setLineDash([6, 5]);
     strokeRoundRect(ctx, trayX, trayY - 7, trayW, trayH, 8);
+    ctx.setLineDash([]);
 
-    ctx.fillStyle = trayActive ? '#D8A72E' : '#87999E';
+    ctx.fillStyle = trayActive ? '#D8A72E' : (unlocked ? '#87999E' : 'rgba(135,153,158,0.34)');
     fillRoundRect(ctx, trayX - 8, trayY + 11, 11, 22, 4);
     fillRoundRect(ctx, trayX + trayW - 3, trayY + 11, 11, 22, 4);
-    ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1;
+    ctx.strokeStyle = unlocked ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.28)'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(trayX + 7, trayY - 2); ctx.lineTo(trayX + trayW - 7, trayY - 2); ctx.stroke();
 
     ctx.fillStyle = CONFIG.COLOR.text;
     ctx.font = 'bold 9px sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('备餐托盘 ' + this.container.length + '/' + this.containerMax, w / 2, trayY - 13);
+    ctx.fillText(unlocked ? '备餐托盘 ' + this.container.length + '/' + this.containerMax : '托盘  💰' + CONFIG.GAME.containerUpgradeCosts[0], w / 2, trayY - 15);
 
     // 每个槽位
-    for (let i = 0; i < this.containerMax; i++) {
+    for (let i = 0; i < slotCount; i++) {
       const x = startX + i * (slotW + slotGap);
       const p = this.container[i];
       const slotGradient = ctx.createLinearGradient(x, trayY, x + slotW, trayY + slotH);
-      slotGradient.addColorStop(0, 'rgba(61,78,84,0.34)');
-      slotGradient.addColorStop(1, 'rgba(255,255,255,0.28)');
+      slotGradient.addColorStop(0, unlocked ? 'rgba(61,78,84,0.34)' : 'rgba(61,78,84,0.16)');
+      slotGradient.addColorStop(1, unlocked ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.12)');
       ctx.fillStyle = slotGradient;
       fillRoundRect(ctx, x + 3, trayY + 4, slotW - 6, slotH - 8, 6);
-      ctx.strokeStyle = 'rgba(64,84,90,0.55)'; ctx.lineWidth = 1.5;
+      ctx.strokeStyle = unlocked ? 'rgba(64,84,90,0.55)' : 'rgba(64,84,90,0.42)'; ctx.lineWidth = 1.5;
+      if (!unlocked) ctx.setLineDash([4, 4]);
       strokeRoundRect(ctx, x + 3, trayY + 4, slotW - 6, slotH - 8, 6);
+      ctx.setLineDash([]);
 
-      if (p && !p.held) {
+      if (unlocked && p && !p.held) {
         const originalX = p.x;
         const originalY = p.y;
         ctx.save();
         ctx.translate(x + slotW / 2, trayY + slotH / 2);
-        ctx.scale(0.52, 0.52);
+        ctx.scale(0.58, 0.58);
         p.x = 0; p.y = 0;
         p.draw(ctx);
         p.x = originalX; p.y = originalY;
         ctx.restore();
-      } else if (!p) {
+      } else if (unlocked && !p) {
         ctx.strokeStyle = 'rgba(255,255,255,0.55)';
         ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]);
         ctx.beginPath(); ctx.arc(x + slotW / 2, trayY + slotH / 2, 15, 0, Math.PI * 2); ctx.stroke();
@@ -1594,40 +1929,74 @@ class Game {
     for (let x = 0; x < w; x += 54) {
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h * 0.62); ctx.stroke();
     }
+    for (let y = 72; y < h * 0.62; y += 44) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+    }
     ctx.fillStyle = CONFIG.COLOR.counter; ctx.fillRect(0, h * 0.62, w, h * 0.38);
     ctx.fillStyle = CONFIG.COLOR.counterEdge; ctx.fillRect(0, h * 0.62, w, 8);
+    ctx.fillStyle = 'rgba(255,248,234,0.18)';
+    ctx.fillRect(0, h * 0.62 + 8, w, 34);
 
     const menuTop = this.menuTop;
     ctx.fillStyle = CONFIG.COLOR.text; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = 'bold 34px sans-serif'; ctx.fillText('不随便煎饼', w / 2, menuTop + 28);
-    ctx.font = '15px sans-serif'; ctx.fillStyle = '#456069'; ctx.fillText('火候要稳，配料要准', w / 2, menuTop + 62);
+    ctx.fillStyle = 'rgba(23,35,39,0.08)';
+    fillRoundRect(ctx, w / 2 - 142, menuTop - 1, 284, 82, 8);
+    ctx.fillStyle = '#FFF8EA';
+    fillRoundRect(ctx, w / 2 - 134, menuTop - 8, 268, 82, 8);
+    ctx.strokeStyle = CONFIG.COLOR.panBorder; ctx.lineWidth = 2.5;
+    strokeRoundRect(ctx, w / 2 - 134, menuTop - 8, 268, 82, 8);
+    ctx.fillStyle = CONFIG.COLOR.counterEdge;
+    fillRoundRect(ctx, w / 2 - 44, menuTop + 66, 88, 6, 3);
+    ctx.font = 'bold 33px sans-serif'; ctx.fillStyle = CONFIG.COLOR.text;
+    ctx.fillText('不随便煎饼', w / 2, menuTop + 25);
+    ctx.font = '14px sans-serif'; ctx.fillStyle = '#456069';
+    ctx.fillText('火候要稳，配料要准', w / 2, menuTop + 56);
 
     // 菜单主视觉：亮色煎饼置于深色鏊子上。
     const plateY = menuTop + 130;
     ctx.fillStyle = 'rgba(23,35,39,0.18)';
     ctx.beginPath(); ctx.ellipse(w / 2, plateY + 42, 65, 13, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,248,234,0.72)';
+    ctx.beginPath(); ctx.ellipse(w / 2, plateY + 28, 78, 16, 0, 0, Math.PI * 2); ctx.fill();
     const menuPanGradient = ctx.createRadialGradient(w / 2 - 18, plateY - 18, 5, w / 2, plateY, 64);
     menuPanGradient.addColorStop(0, '#53666C'); menuPanGradient.addColorStop(1, '#172327');
     ctx.fillStyle = menuPanGradient;
     ctx.beginPath(); ctx.arc(w / 2, plateY, 61, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(w / 2 - 6, plateY - 4, 47, Math.PI * 1.12, Math.PI * 1.72); ctx.stroke();
     const menuCakeGradient = ctx.createRadialGradient(w / 2 - 12, plateY - 14, 3, w / 2, plateY, 42);
     menuCakeGradient.addColorStop(0, '#FFF0A8'); menuCakeGradient.addColorStop(0.72, '#F5B942'); menuCakeGradient.addColorStop(1, '#C9852E');
     ctx.fillStyle = menuCakeGradient;
     ctx.beginPath(); ctx.arc(w / 2, plateY, 40, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#FFD54F'; ctx.beginPath(); ctx.arc(w / 2 - 8, plateY - 6, 10, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#EF8B76'; ctx.fillRect(w / 2 + 3, plateY - 12, 22, 8);
-    ctx.fillStyle = '#5FAE7C'; ctx.beginPath(); ctx.ellipse(w / 2 + 10, plateY + 12, 15, 6, -0.3, 0, Math.PI * 2); ctx.fill();
+    drawIngredientIcon(ctx, 'egg', w / 2 - 9, plateY - 7, 22);
+    drawIngredientIcon(ctx, 'ham', w / 2 + 20, plateY - 12, 28);
+    drawIngredientIcon(ctx, 'lettuce', w / 2 + 12, plateY + 13, 32);
 
     const btn = this.menuBtn;
+    ctx.fillStyle = 'rgba(23,35,39,0.16)';
+    fillRoundRect(ctx, btn.x + 3, btn.y + 5, btn.w, btn.h, 12);
     ctx.fillStyle = CONFIG.COLOR.btn; fillRoundRect(ctx, btn.x, btn.y, btn.w, btn.h, 12);
     ctx.strokeStyle = CONFIG.COLOR.panBorder; ctx.lineWidth = 3; strokeRoundRect(ctx, btn.x, btn.y, btn.w, btn.h, 12);
     ctx.fillStyle = '#FFF'; ctx.font = 'bold 22px sans-serif';
     ctx.fillText(btn.label, btn.x + btn.w / 2, btn.y + btn.h / 2);
 
     // ---------- 本机历史前三名 ----------
-    const headerY = menuTop + 278;
+    const headerY = this.rankingToggleBtn.y + this.rankingToggleBtn.h / 2;
+    const panelX = 14;
+    const panelY = headerY - 28;
+    const panelW = w - 28;
+    const panelH = 148;
+    ctx.fillStyle = 'rgba(38,50,56,0.12)';
+    fillRoundRect(ctx, panelX + 2, panelY + 4, panelW, panelH, 8);
+    ctx.fillStyle = 'rgba(255,248,234,0.92)';
+    fillRoundRect(ctx, panelX, panelY, panelW, panelH, 8);
+    ctx.strokeStyle = 'rgba(184,106,66,0.45)';
+    ctx.lineWidth = 1.5;
+    strokeRoundRect(ctx, panelX, panelY, panelW, panelH, 8);
+
     ctx.fillStyle = CONFIG.COLOR.text; ctx.font = 'bold 16px sans-serif';
-    ctx.textAlign = 'left'; ctx.fillText('个人历史', 20, headerY);
+    ctx.textAlign = 'left'; ctx.fillText('个人历史', panelX + 12, headerY);
 
     const toggle = this.rankingToggleBtn;
     ctx.fillStyle = '#2D88A8'; fillRoundRect(ctx, toggle.x, toggle.y, toggle.w, toggle.h, 7);
@@ -1642,29 +2011,31 @@ class Game {
       const rankColors = ['#D8A72E', '#78909C', '#B86A42'];
       records.forEach((record, index) => {
         const rowY = this.menuRankingTop + index * 30;
-        ctx.fillStyle = index % 2 === 0 ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.48)';
-        ctx.fillRect(18, rowY, w - 36, 27);
+        ctx.fillStyle = index % 2 === 0 ? 'rgba(255,255,255,0.82)' : 'rgba(255,247,228,0.92)';
+        fillRoundRect(ctx, panelX + 8, rowY, panelW - 16, 27, 5);
         ctx.fillStyle = rankColors[index]; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'left';
-        ctx.fillText('#' + (index + 1), 25, rowY + 14);
+        ctx.fillText('#' + (index + 1), panelX + 16, rowY + 14);
         const primary = this.rankingMode === 'score' ? record.score + '分' : '第' + record.wave + '波';
         const secondary = this.rankingMode === 'score'
           ? '第' + record.wave + '波 · 接待' + record.served
           : record.score + '分 · 接待' + record.served;
         ctx.fillStyle = CONFIG.COLOR.text; ctx.font = 'bold 13px sans-serif';
-        ctx.fillText(primary, 54, rowY + 14);
+        ctx.fillText(primary, panelX + 48, rowY + 14);
         ctx.fillStyle = '#60747A'; ctx.font = '11px sans-serif';
-        ctx.fillText(secondary, 116, rowY + 14);
-        ctx.textAlign = 'right'; ctx.fillText(this.formatHistoryDate(record.timestamp), w - 24, rowY + 14);
+        ctx.fillText(secondary, panelX + 110, rowY + 14);
+        ctx.textAlign = 'right'; ctx.fillText(this.formatHistoryDate(record.timestamp), panelX + panelW - 16, rowY + 14);
       });
     }
 
     const reviewBtn = this.reviewTutorialBtn;
+    ctx.fillStyle = 'rgba(23,35,39,0.14)'; fillRoundRect(ctx, reviewBtn.x + 2, reviewBtn.y + 3, reviewBtn.w, reviewBtn.h, 10);
     ctx.fillStyle = '#FFF'; fillRoundRect(ctx, reviewBtn.x, reviewBtn.y, reviewBtn.w, reviewBtn.h, 10);
     ctx.strokeStyle = CONFIG.COLOR.panBorder; ctx.lineWidth = 2; strokeRoundRect(ctx, reviewBtn.x, reviewBtn.y, reviewBtn.w, reviewBtn.h, 10);
     ctx.fillStyle = CONFIG.COLOR.text; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center';
     ctx.fillText('📖 回顾教程', reviewBtn.x + reviewBtn.w / 2, reviewBtn.y + reviewBtn.h / 2);
 
     const catalogBtn = this.menuCatalogBtn;
+    ctx.fillStyle = 'rgba(23,35,39,0.14)'; fillRoundRect(ctx, catalogBtn.x + 2, catalogBtn.y + 3, catalogBtn.w, catalogBtn.h, 10);
     ctx.fillStyle = '#FFF'; fillRoundRect(ctx, catalogBtn.x, catalogBtn.y, catalogBtn.w, catalogBtn.h, 10);
     ctx.strokeStyle = CONFIG.COLOR.panBorder; ctx.lineWidth = 2; strokeRoundRect(ctx, catalogBtn.x, catalogBtn.y, catalogBtn.w, catalogBtn.h, 10);
     ctx.fillStyle = CONFIG.COLOR.text; ctx.font = 'bold 14px sans-serif';
@@ -1808,28 +2179,38 @@ class Game {
     this.renderGame(ctx);
     ctx.fillStyle = 'rgba(18,30,34,0.24)'; ctx.fillRect(0, 0, w, h);
 
-    // 开场与总结居中；实际操作步骤固定在底部，不遮挡顾客和锅位。
-    const isBookend = step === 0 || step === 5;
+    // 开场、补充说明与总结居中；购买教学保持小面板，不遮挡底部商店。
+    const isPurchaseStep = step === 6;
+    const isBookend = step === 0 || (step >= 5 && !isPurchaseStep);
     const boxW = Math.min(w - 40, 340);
-    const boxH = isBookend ? 224 : 116;
+    const boxH = isPurchaseStep ? (this.shopOpen ? 174 : 126) : (isBookend ? 224 : 116);
     const boxX = (w - boxW) / 2;
-    const boxY = isBookend ? (h - boxH) / 2 - 12 : h - boxH - 6;
+    let boxY = isBookend ? (h - boxH) / 2 - 12 : h - boxH - 6;
+    if (isPurchaseStep) {
+      const anchorY = this.shopOpen ? this.shopPanel.y : this.purchaseBtn.y;
+      boxY = Math.max(this.gameTopOffset + 70, anchorY - boxH - 12);
+    }
     ctx.fillStyle = 'rgba(255,255,255,0.96)'; fillRoundRect(ctx, boxX, boxY, boxW, boxH, 16);
     ctx.strokeStyle = CONFIG.COLOR.btn; ctx.lineWidth = 3; strokeRoundRect(ctx, boxX, boxY, boxW, boxH, 16);
 
     // 步骤指示
     ctx.fillStyle = '#B0BEC5'; ctx.font = 'bold 12px sans-serif';
     ctx.textAlign = 'right'; ctx.textBaseline = 'top';
-    ctx.fillText((step + 1) + ' / 6', boxX + boxW - 12, boxY + 10);
+    ctx.fillText((step + 1) + ' / 9', boxX + boxW - 12, boxY + 10);
 
     ctx.fillStyle = '#3E2723'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     const stepTexts = [
-      '先看懂顾客的订单\n顾客头顶气泡显示所需配料\n下方耐心条会由绿变黄、变红\n超时离开会扣人气\n这一单是：面饼 + 鸡蛋',
+      '先看懂顾客的订单\n气泡上排是顾客需要的配料\n红色斜杠代表忌口，不能加入\n下方耐心条会由绿变黄、变红\n这一单是：面饼 + 鸡蛋，不能加肠',
       '第一步 · 面糊下锅\n方式A：按住【面饼】拖到空锅\n方式B：点【面饼】，再点空锅\n发光虚线框就是下一目标',
       '第二步 · 翻面前加鸡蛋\n拖【蛋】到锅，或先点【蛋】再点锅\n鸡蛋是唯一需要翻面前加入的配料\n同一种配料不能重复添加',
       '第三步 · 看火翻面\n★出现时点击煎饼\n金色火候区间翻面收益更高\n教程不会煎糊，可以先观察',
       '第四步 · 出锅上菜\n✓出现代表第二面火候最佳\n点煎饼再点顾客，或直接拖给顾客\n成品配料必须与订单完全一致',
-      '第一单完成\n蛋在翻面前加，其他配料翻面后加\n菜脆葱酱用【小料进货】统一补充\n红色忌口绝对不能加入\n技巧让本局可翻面时必定完美'
+      '关于忌口\n红色斜杠只表示“不要这个”\n如果顾客忌口肉肠，就算其他配料正确\n加了肉肠也会扣人气或要求重做',
+      this.shopOpen
+        ? '关于购买\n这里能看到所有补货按钮\n第一行：面糊、鸡蛋、肉肠\n最后一行：小料进货\n看清楚后点继续'
+        : '关于购买\n请亲自点一下屏幕最底部【商店】\n打开后可以看到补货抽屉\n这一步不用真的购买\n先看看每个按钮的位置',
+      '关于摊位工具\n左侧技巧、微笑、大锅是一次性购买\n技巧：可翻面时必定完美\n微笑：顾客更有耐心\n大锅：增加锅位',
+      '第一单完成\n蛋在翻面前加，其他配料翻面后加\n菜脆葱酱用商店里的【小料进货】补充\n虚线托盘可购买，买后能暂存成品\n准备好就开始营业'
     ];
     const lines = stepTexts[step].split('\n');
     ctx.font = 'bold ' + (isBookend ? 14 : 13) + 'px sans-serif';
@@ -1838,17 +2219,17 @@ class Game {
 
     // 开场确认与教程完成按钮
     this.tutorialContinueBtn = null;
-    if (isBookend) {
+    if (isBookend || (isPurchaseStep && this.shopOpen)) {
       const btnW = 160, btnH = 46, btnX = (w - btnW) / 2, btnY = boxY + boxH - 58;
       this.tutorialContinueBtn = { x: btnX, y: btnY, w: btnW, h: btnH };
       ctx.fillStyle = CONFIG.COLOR.btn; fillRoundRect(ctx, btnX, btnY, btnW, btnH, 10);
       ctx.strokeStyle = '#3E2723'; ctx.lineWidth = 2; strokeRoundRect(ctx, btnX, btnY, btnW, btnH, 10);
       ctx.fillStyle = '#FFF'; ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(step === 0 ? '开始练习' : '开始营业', w / 2, btnY + btnH / 2);
+      ctx.fillText(step === 0 ? '开始练习' : (step < 8 ? '继续' : '开始营业'), w / 2, btnY + btnH / 2);
     }
 
     // 跳过教程按钮（练习完成前显示）
-    if (step < 5 && this.tutorialSkipBtn) {
+    if (step < 8 && this.tutorialSkipBtn) {
       const sb = this.tutorialSkipBtn;
       ctx.fillStyle = 'rgba(255,255,255,0.85)'; fillRoundRect(ctx, sb.x, sb.y, sb.w, sb.h, 8);
       ctx.strokeStyle = '#999'; ctx.lineWidth = 1; strokeRoundRect(ctx, sb.x, sb.y, sb.w, sb.h, 8);
@@ -1890,6 +2271,10 @@ class Game {
         const pan = this.pans.find(p => p.pancake && p.pancake.phase === 'second');
         if (pan) targetRect = { x: pan.x - 42, y: pan.y - 42, w: 84, h: 84 };
       }
+    } else if (step === 6) {
+      targetRect = this.shopOpen
+        ? { x: 10, y: this.shopPanel.y + 44, w: w - 20, h: this.shopPanel.h - 52 }
+        : { x: this.purchaseBtn.x + 6, y: this.purchaseBtn.y + 4, w: this.purchaseBtn.w - 12, h: this.purchaseBtn.h - 8 };
     }
     if (targetRect) { ctx.beginPath(); ctx.strokeRect(targetRect.x, targetRect.y, targetRect.w, targetRect.h); }
     ctx.setLineDash([]);
