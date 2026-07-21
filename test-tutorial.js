@@ -772,6 +772,156 @@ test('35. 顾客订单绘制为独立气泡，顾客本体尺寸更清楚', () =
   assert.ok(ctx._iconLog.some(icon => icon.kind === 'ingredient' && icon.id === 'egg'));
 });
 
+test('36. Quick restock buys depleted unlocked stock without opening the shop', () => {
+  const game = new Game(null, 375, 812);
+  game.startGame();
+  game.wave = 3;
+  game.resources.gold = 50;
+  game.resources.batter = 0;
+  game.resources.egg = 0;
+  game.resources.ham = 2;
+  game.resources.lettuce = 0;
+  game.resources.crispy = 0;
+
+  const quickButtons = game.getQuickRestockButtons();
+  assert.deepStrictEqual(
+    quickButtons.map(button => button.id),
+    ['quickBuyBatter', 'quickBuyEgg', 'quickBuyToppings']
+  );
+  assert.ok(quickButtons.every(button => button.y + button.h <= game.purchaseBtn.y));
+
+  const batter = quickButtons.find(button => button.id === 'quickBuyBatter');
+  game.handleTouch(batter.x + batter.w / 2, batter.y + batter.h / 2);
+  assert.strictEqual(game.shopOpen, false);
+  assert.strictEqual(game.resources.gold, 46);
+  assert.strictEqual(game.resources.batter, 5);
+});
+
+test('37. Quick restock hides during shop or held states and blocks unaffordable buys', () => {
+  const game = new Game(null, 375, 812);
+  game.startGame();
+  game.resources.gold = 3;
+  game.resources.batter = 0;
+
+  let quickButtons = game.getQuickRestockButtons();
+  assert.strictEqual(quickButtons.length, 1);
+  assert.strictEqual(quickButtons[0].disabled, true);
+  game.handleTouch(quickButtons[0].x + quickButtons[0].w / 2, quickButtons[0].y + quickButtons[0].h / 2);
+  assert.strictEqual(game.resources.gold, 3);
+  assert.strictEqual(game.resources.batter, 0);
+  assert.strictEqual(game.floatingTexts.at(-1).text, '金币不够');
+
+  game.resources.gold = 10;
+  game.shopOpen = true;
+  assert.strictEqual(game.getQuickRestockButtons().length, 0);
+  game.shopOpen = false;
+  game.heldIngredient = { type: 'batter', need: { batter: 1 } };
+  assert.strictEqual(game.getQuickRestockButtons().length, 0);
+});
+
+test('38. Quick restock buttons expose subtle shake and highlight attention state', () => {
+  const game = new Game(null, 375, 812);
+  game.startGame();
+  game.resources.batter = 0;
+  const button = game.getQuickRestockButtons()[0];
+
+  const first = game.getQuickRestockAttention(button, 1000);
+  const second = game.getQuickRestockAttention(button, 1150);
+  assert.ok(Math.abs(first.shakeX) <= 2.5);
+  assert.notStrictEqual(first.shakeX, second.shakeX);
+  assert.ok(first.glowAlpha > 0);
+  assert.ok(first.glowRadius >= 0);
+});
+
+test('39. Main and pause screens open settings and persist volume and mute', () => {
+  const storage = {};
+  const originalGet = wx.getStorageSync;
+  const originalSet = wx.setStorageSync;
+  const originalCreate = wx.createInnerAudioContext;
+  wx.getStorageSync = key => storage[key];
+  wx.setStorageSync = (key, value) => { storage[key] = value; };
+  wx.createInnerAudioContext = () => ({
+    volume: 1,
+    loop: false,
+    src: '',
+    play: () => {},
+    pause: () => {},
+    stop: () => {},
+    seek: () => {},
+    destroy: () => {},
+    onEnded: () => {},
+    onError: () => {}
+  });
+
+  try {
+    const game = new Game(null, 375, 667);
+    const menuSettings = game.menuSettingsBtn;
+    game.handleTouch(menuSettings.x + menuSettings.w / 2, menuSettings.y + menuSettings.h / 2);
+    assert.strictEqual(game.settingsOpen, true);
+    assert.strictEqual(game.settingsSource, 'menu');
+
+    const slider = game.settingsSlider;
+    game.handleTouch(slider.x + slider.w * 0.3, slider.y + slider.h / 2);
+    assert.strictEqual(game.audio.volume, 30);
+    assert.strictEqual(storage.gameSoundVolume, 30);
+
+    const toggle = game.settingsToggleBtn;
+    assert.ok(toggle.x > slider.x + slider.w, '静音开关应在音量条右侧');
+    assert.ok(Math.abs((toggle.y + toggle.h / 2) - (slider.y + slider.h / 2)) <= 8, '静音开关应与音量条同一行');
+    game.handleTouch(toggle.x + toggle.w / 2, toggle.y + toggle.h / 2);
+    assert.strictEqual(game.audio.enabled, false);
+    assert.strictEqual(storage.gameSoundEnabled, false);
+
+    const settingsCtx = createMockContext();
+    game.renderSettings(settingsCtx);
+    assert.ok(!settingsCtx.texts.includes('拖动滑条调节音量'));
+    assert.ok(!settingsCtx.texts.includes('点击开关可一键静音'));
+    assert.ok(!settingsCtx.texts.includes('已开启'));
+    assert.ok(!settingsCtx.texts.includes('已关闭'));
+
+    const close = game.settingsCloseBtn;
+    game.handleTouch(close.x + close.w / 2, close.y + close.h / 2);
+    assert.strictEqual(game.settingsOpen, false);
+
+    game.state = 'paused';
+    const pauseSettings = game.pauseSettingsBtn;
+    game.handleTouch(pauseSettings.x + pauseSettings.w / 2, pauseSettings.y + pauseSettings.h / 2);
+    assert.strictEqual(game.settingsOpen, true);
+    assert.strictEqual(game.settingsSource, 'paused');
+  } finally {
+    wx.getStorageSync = originalGet;
+    wx.setStorageSync = originalSet;
+    wx.createInnerAudioContext = originalCreate;
+  }
+});
+
+test('40. Core gameplay actions trigger expected audio cues', () => {
+  const game = new Game(null, 375, 667);
+  game.startGame();
+  const played = [];
+  game.audio.play = name => { played.push(name); };
+
+  const purchase = game.buttons.find(button => button.id === 'purchase');
+  game.handleTouch(purchase.x + purchase.w / 2, purchase.y + purchase.h / 2);
+  assert.ok(played.includes('shop_open'));
+
+  played.length = 0;
+  game.onButton({ type: 'buy', item: 'batter', cost: 4, buyAmount: 5, x: 10, y: 10, w: 50, h: 30 });
+  assert.ok(played.includes('restock'));
+
+  played.length = 0;
+  game.upgrades.speed = 1;
+  const pan = game.pans[0];
+  const pancake = new Pancake(game.getCookTime(), game.getSide2Time());
+  pancake.phase = 'first';
+  pancake.state = 'cooking';
+  pancake.elapsed = pancake.cookTime * 0.42;
+  pancake.update(0);
+  pan.pancake = pancake;
+  assert.strictEqual(game.startPanFlip(pan), true);
+  assert.ok(played.includes('perfect'));
+});
+
 console.log(results.join('\n'));
 console.log('\n通过 ' + passed + ' / ' + results.length + ' 个用例');
 if (passed !== results.length) {

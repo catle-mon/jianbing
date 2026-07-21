@@ -15,6 +15,7 @@
 const CONFIG = require('./config.js');
 const { Pancake, Customer, Particle } = require('./entities.js');
 const { fillRoundRect, strokeRoundRect, drawIngredientIcon, drawActionIcon } = require('./utils.js');
+const AudioManager = require('./audio.js');
 const HISTORY_VERSION = 2;
 
 class Game {
@@ -36,6 +37,10 @@ class Game {
     this.catalogReturnState = 'menu';
     this.historyRecords = this.loadHistoryRecords();
     this.rankingMode = this.loadRankingMode();
+    this.audio = new AudioManager();
+    this.settingsOpen = false;
+    this.settingsSource = 'menu';
+    this.settingsDragging = false;
     this.reset();
     this.initLayout();
   }
@@ -182,6 +187,15 @@ class Game {
 
   // ===================== 界面布局 =====================
 
+  getShopEntries() {
+    return [
+      { id: 'buyBatter', label: '面糊补货', type: 'buy', icon: 'batter', item: 'batter', cost: CONFIG.GAME.toppings[0]?.cost || 2, buyAmount: 5, quickId: 'quickBuyBatter', quickLabel: '面糊' },
+      { id: 'buyEgg', label: '鸡蛋补货', type: 'buy', icon: 'egg', item: 'egg', cost: 5, buyAmount: 3, quickId: 'quickBuyEgg', quickLabel: '鸡蛋' },
+      { id: 'buyHam', label: '肉肠补货', type: 'buy', icon: 'ham', item: 'ham', cost: 6, buyAmount: 3, quickId: 'quickBuyHam', quickLabel: '肉肠' },
+      { id: 'buyToppings', label: '小料进货', type: 'buyBundle', icon: 'lettuce', items: CONFIG.GAME.smallToppingIds, cost: 8, buyAmount: 3, unlockWave: 3, quickId: 'quickBuyToppings', quickLabel: '小料' }
+    ];
+  }
+
   initLayout() {
     const w = this.width, h = this.height;
     const tallScreen = h >= 760;
@@ -250,12 +264,7 @@ class Game {
     const shopBtnH = 42;
     const shopBtnW = (w - shopPadding * 2 - shopGap * 2) / 3;
     const shopStartY = this.shopPanel.y + 46;
-    const shopEntries = [
-      { id: 'buyBatter', label: '面糊补货', type: 'buy', icon: 'batter', item: 'batter', cost: CONFIG.GAME.toppings[0]?.cost || 2 },
-      { id: 'buyEgg', label: '鸡蛋补货', type: 'buy', icon: 'egg', item: 'egg', cost: 5 },
-      { id: 'buyHam', label: '肉肠补货', type: 'buy', icon: 'ham', item: 'ham', cost: 6 },
-      { id: 'buyToppings', label: '小料进货', type: 'buyBundle', icon: 'lettuce', items: CONFIG.GAME.smallToppingIds, cost: 8, buyAmount: 3, unlockWave: 3 }
-    ];
+    const shopEntries = this.getShopEntries();
     this.shopButtons = shopEntries.map((item, index) => ({
       ...item,
       x: index < 3 ? shopPadding + index * (shopBtnW + shopGap) : shopPadding,
@@ -276,6 +285,7 @@ class Game {
     const secondaryStartX = (w - (secondaryW * 2 + secondaryGap)) / 2;
     this.reviewTutorialBtn = { x: secondaryStartX, y: this.menuTop + 405 + menuHistoryOffset, w: secondaryW, h: 40, label: '回顾教程' };
     this.menuCatalogBtn = { x: secondaryStartX + secondaryW + secondaryGap, y: this.menuTop + 405 + menuHistoryOffset, w: secondaryW, h: 40, label: '顾客图鉴' };
+    this.menuSettingsBtn = { x: w / 2 - 80, y: this.menuTop + 455 + menuHistoryOffset, w: 160, h: 40, label: '设置' };
     this.restartBtn = { x: w / 2 - 80, y: h / 2 + 62, w: 160, h: 46, label: '再来一次' };
     this.gameOverMenuBtn = { x: w / 2 - 80, y: h / 2 + 120, w: 160, h: 42, label: '返回主界面' };
 
@@ -294,6 +304,16 @@ class Game {
     this.pauseRestartBtn = { x: w / 2 - 80, y: h / 2 + 10, w: 160, h: 50, label: '重新开始' };
     this.pauseMenuBtn = { x: w / 2 - 80, y: h / 2 + 80, w: 160, h: 50, label: '回到主界面' };
     this.pauseCatalogBtn = { x: w / 2 - 80, y: h / 2 + 145, w: 160, h: 40, label: '顾客图鉴' };
+    this.pauseSettingsBtn = { x: w / 2 - 80, y: h / 2 + 195, w: 160, h: 40, label: '设置' };
+
+    const settingsW = Math.min(304, w - 36);
+    const settingsH = 146;
+    const settingsX = (w - settingsW) / 2;
+    const settingsY = Math.max(this.topOffset + 80, h * 0.28);
+    this.settingsPanel = { x: settingsX, y: settingsY, w: settingsW, h: settingsH };
+    this.settingsCloseBtn = { x: settingsX + settingsW - 36, y: settingsY + 10, w: 26, h: 24, label: '×' };
+    this.settingsSlider = { x: settingsX + 24, y: settingsY + 78, w: settingsW - 108, h: 20 };
+    this.settingsToggleBtn = { x: settingsX + settingsW - 74, y: settingsY + 72, w: 46, h: 30, label: '' };
 
     // 网红探店按钮
     this.influencerAcceptBtn = { x: w / 2 - 140, y: h / 2 + 40, w: 120, h: 46, label: '接受' };
@@ -311,6 +331,50 @@ class Game {
   getMinServeTime() {
     // 最短制作时间 = 第一面到可翻 + 第二面煎到完美
     return this.getCookTime() * CONFIG.GAME.flipPerfectStart + this.getSide2Time() * CONFIG.GAME.perfectStart;
+  }
+
+  playSound(name) {
+    if (this.audio && typeof this.audio.play === 'function') this.audio.play(name);
+  }
+
+  openSettings(source) {
+    this.settingsOpen = true;
+    this.settingsSource = source || 'menu';
+    this.settingsDragging = false;
+    if (this.audio && typeof this.audio.playBgm === 'function') this.audio.playBgm();
+    this.playSound('ui');
+  }
+
+  closeSettings() {
+    this.settingsOpen = false;
+    this.settingsDragging = false;
+    this.playSound('ui');
+  }
+
+  handleSettingsTouch(x, y) {
+    if (!this.settingsPanel) return;
+    if (this.hit(x, y, this.settingsCloseBtn)) {
+      this.closeSettings();
+      return;
+    }
+    if (this.hit(x, y, this.settingsToggleBtn)) {
+      this.playSound('ui');
+      this.audio.toggleEnabled();
+      return;
+    }
+    if (this.hit(x, y, this.settingsSlider)) {
+      this.settingsDragging = true;
+      this.setAudioVolumeFromX(x);
+      return;
+    }
+    if (!this.hit(x, y, this.settingsPanel)) this.closeSettings();
+  }
+
+  setAudioVolumeFromX(x) {
+    const slider = this.settingsSlider;
+    if (!slider) return;
+    const pct = Math.max(0, Math.min(1, (x - slider.x) / slider.w));
+    this.audio.setVolume(Math.round(pct * 100));
   }
 
   // ===================== 状态切换 =====================
@@ -334,6 +398,7 @@ class Game {
     this.tutorialCustomer = new Customer(Date.now(), ['egg'], 999999, Math.min(100, this.width - 40), 100,
       CONFIG.GAME.customerTypes[0], 'ham');
     this.customers = [this.tutorialCustomer];
+    this.audio.playBgm();
     this.lastTime = Date.now();
   }
 
@@ -342,6 +407,7 @@ class Game {
     this.initLayout();
     this.state = 'playing';
     this.lastSpawnTime = Date.now();
+    this.audio.playBgm();
     this.lastTime = Date.now();
   }
 
@@ -393,6 +459,7 @@ class Game {
         pan.pancake.update(dt);
         pan.pancake.x = pan.x; pan.pancake.y = pan.y;
         if (!wasBurnt && pan.pancake.state === 'burnt') {
+          this.playSound('burnt');
           this.triggerFeedback('burnt', pan.x, pan.y);
         }
       }
@@ -410,6 +477,7 @@ class Game {
         this.streakMultiplier = 1;
         this.lastServeCorrect = false;
         this.spawnText(c.x, c.y - 30, `人气${CONFIG.GAME.popularityTimeout}`, '#EF5350');
+        this.playSound('customer_leave');
       }
       this.customers = this.customers.filter(c => c.state !== 'leaving');
       if (this.popularity <= 0) {
@@ -561,6 +629,62 @@ class Game {
     return { trayY, slotW, slotH, slotGap, totalW, startX, slotCount, trayX, trayW, trayH };
   }
 
+  getQuickRestockButtons() {
+    if (this.state !== 'playing' || this.shopOpen || this.heldIngredient || this.heldPancake || !this.purchaseBtn) return [];
+
+    const entries = this.getShopEntries();
+    const quickEntries = [];
+    entries.forEach(entry => {
+      if (entry.type === 'buy') {
+        if ((this.resources[entry.item] || 0) <= 0) quickEntries.push(entry);
+        return;
+      }
+      if (entry.type === 'buyBundle') {
+        const unlockedItems = entry.items.filter(itemId => {
+          const cfg = CONFIG.GAME.toppings.find(topping => topping.id === itemId);
+          return !cfg || cfg.unlockWave <= this.wave;
+        });
+        if (this.wave >= entry.unlockWave && unlockedItems.some(itemId => (this.resources[itemId] || 0) <= 0)) {
+          quickEntries.push(entry);
+        }
+      }
+    });
+    if (quickEntries.length === 0) return [];
+
+    const gap = 6;
+    const side = 10;
+    const h = 36;
+    const w = Math.min(112, (this.width - side * 2 - gap * (quickEntries.length - 1)) / quickEntries.length);
+    const totalW = w * quickEntries.length + gap * (quickEntries.length - 1);
+    const startX = (this.width - totalW) / 2;
+    const tray = this.getTrayLayout();
+    const preferredY = this.purchaseBtn.y - h - 8;
+    const trayBottom = tray.trayY + tray.trayH;
+    const y = preferredY >= trayBottom + 6 ? preferredY : Math.max(0, tray.trayY - h - 14);
+
+    return quickEntries.map((entry, index) => ({
+      ...entry,
+      id: entry.quickId,
+      sourceId: entry.id,
+      x: startX + index * (w + gap),
+      y,
+      w,
+      h,
+      disabled: this.resources.gold < entry.cost
+    }));
+  }
+
+  getQuickRestockAttention(btn, now = Date.now()) {
+    const phase = now * 0.012 + btn.x * 0.025;
+    const pulse = (Math.sin(phase) + 1) / 2;
+    const disabled = !!btn.disabled;
+    return {
+      shakeX: Math.sin(phase * 1.7) * (disabled ? 0.7 : 2),
+      glowAlpha: disabled ? 0.07 + pulse * 0.04 : 0.16 + pulse * 0.12,
+      glowRadius: disabled ? 1 + pulse * 2 : 3 + pulse * 4
+    };
+  }
+
   tryPlaceHeldIngredient(pan, tutorialMode) {
     const ing = this.heldIngredient;
     if (!ing || !pan) return false;
@@ -576,6 +700,7 @@ class Game {
       pan.pancake.y = pan.y;
       this.spawnParticles(pan.x, pan.y, '#FFF4C7', 3, 6);
       this.spawnText(pan.x, pan.y - 48, '面糊下锅', '#3F8F73');
+      this.playSound('place');
       this.heldIngredient = null;
       if (tutorialMode && this.tutorial.step === 1) this.tutorial.step = 2;
       return true;
@@ -614,6 +739,7 @@ class Game {
       const color = tcfg ? CONFIG.COLOR[tcfg.colorKey] : '#999';
       this.spawnParticles(pan.x, pan.y, color, 3, 6);
       this.spawnText(pan.x, pan.y - 48, toppingName + '已加入', color);
+      this.playSound('place');
       this.heldIngredient = null;
       if (tutorialMode && this.tutorial.step === 2 && ing.toppingId === 'egg') this.tutorial.step = 3;
       return true;
@@ -630,6 +756,7 @@ class Game {
     this.flipAnimations.push({ pan, pancake, start: Date.now(), duration: 440, perfect: wasPerfect });
     this.spawnText(pan.x, pan.y - 54, wasPerfect ? '完美翻面!' : '翻面!', wasPerfect ? '#F2B705' : '#2D88A8');
     this.spawnParticles(pan.x, pan.y, wasPerfect ? '#F2B705' : '#64B5C4', 4, 9);
+    this.playSound(wasPerfect ? 'perfect' : 'flip');
     if (wasPerfect) this.triggerFeedback('perfectFlip', pan.x, pan.y);
     return true;
   }
@@ -682,23 +809,31 @@ class Game {
     this.touchX = x; this.touchY = y;
     this.touchStartX = x; this.touchStartY = y;
     this.touchMoved = false;
+    if (this.audio && typeof this.audio.playBgm === 'function') this.audio.playBgm();
+
+    if (this.settingsOpen) {
+      this.handleSettingsTouch(x, y);
+      return;
+    }
 
     if (this.state === 'menu') {
-      if (this.hit(x, y, this.menuBtn)) this.start();
-      else if (this.hit(x, y, this.reviewTutorialBtn)) this.startTutorial();
-      else if (this.hit(x, y, this.menuCatalogBtn)) this.openCatalog('menu');
-      else if (this.hit(x, y, this.rankingToggleBtn)) this.toggleRankingMode();
+      if (this.hit(x, y, this.menuBtn)) { this.playSound('ui'); this.start(); }
+      else if (this.hit(x, y, this.reviewTutorialBtn)) { this.playSound('ui'); this.startTutorial(); }
+      else if (this.hit(x, y, this.menuCatalogBtn)) { this.playSound('ui'); this.openCatalog('menu'); }
+      else if (this.hit(x, y, this.rankingToggleBtn)) { this.playSound('ui'); this.toggleRankingMode(); }
+      else if (this.hit(x, y, this.menuSettingsBtn)) this.openSettings('menu');
       return;
     }
 
     if (this.state === 'catalog') {
-      if (this.hit(x, y, this.catalogBackBtn)) this.closeCatalog();
+      if (this.hit(x, y, this.catalogBackBtn)) { this.playSound('ui'); this.closeCatalog(); }
       return;
     }
 
     if (this.state === 'gameover') {
-      if (this.hit(x, y, this.restartBtn)) this.startGame();
+      if (this.hit(x, y, this.restartBtn)) { this.playSound('ui'); this.startGame(); }
       else if (this.hit(x, y, this.gameOverMenuBtn)) {
+        this.playSound('ui');
         this.state = 'menu';
         this.reset();
         this.initLayout();
@@ -707,10 +842,11 @@ class Game {
     }
 
     if (this.state === 'paused') {
-      if (this.hit(x, y, this.resumeBtn)) { this.state = 'playing'; this.lastTime = Date.now(); }
-      else if (this.hit(x, y, this.pauseRestartBtn)) this.startGame();
-      else if (this.hit(x, y, this.pauseMenuBtn)) { this.state = 'menu'; this.reset(); this.initLayout(); }
-      else if (this.hit(x, y, this.pauseCatalogBtn)) this.openCatalog('paused');
+      if (this.hit(x, y, this.resumeBtn)) { this.playSound('ui'); this.state = 'playing'; this.lastTime = Date.now(); }
+      else if (this.hit(x, y, this.pauseRestartBtn)) { this.playSound('ui'); this.startGame(); }
+      else if (this.hit(x, y, this.pauseMenuBtn)) { this.playSound('ui'); this.state = 'menu'; this.reset(); this.initLayout(); }
+      else if (this.hit(x, y, this.pauseCatalogBtn)) { this.playSound('ui'); this.openCatalog('paused'); }
+      else if (this.hit(x, y, this.pauseSettingsBtn)) this.openSettings('paused');
       return;
     }
 
@@ -725,12 +861,17 @@ class Game {
     if (this.hit(x, y, this.catalogBtn)) { this.openCatalog('playing'); return; }
     if (this.hit(x, y, this.pauseBtn)) { this.state = 'paused'; return; }
     if (this.state === 'playing' && this.shopOpen) {
-      if (this.hit(x, y, this.shopCloseBtn)) { this.shopOpen = false; return; }
-      if (!this.hit(x, y, this.shopPanel)) { this.shopOpen = false; return; }
+      if (this.hit(x, y, this.shopCloseBtn)) { this.playSound('ui'); this.shopOpen = false; return; }
+      if (!this.hit(x, y, this.shopPanel)) { this.playSound('ui'); this.shopOpen = false; return; }
       for (const btn of this.shopButtons) {
         if (this.hit(x, y, btn)) { this.onButton(btn); return; }
       }
       return;
+    }
+    if (!this.heldPancake && !this.heldIngredient) {
+      for (const btn of this.getQuickRestockButtons()) {
+        if (this.hit(x, y, btn)) { this.onButton(btn); return; }
+      }
     }
     if (!this.heldPancake && !this.heldIngredient) {
       for (const btn of this.upgradeButtons) {
@@ -870,6 +1011,7 @@ class Game {
     if (step === 6) {
       if (!this.shopOpen && this.hit(x, y, this.purchaseBtn)) {
         this.shopOpen = true;
+        this.playSound('shop_open');
         this.spawnText(this.width / 2, this.purchaseBtn.y - 14, '商店打开了', '#2D88A8');
         return;
       }
@@ -977,9 +1119,11 @@ class Game {
   handleTouchMove(x, y) {
     this.touchX = x; this.touchY = y;
     if (Math.hypot(x - this.touchStartX, y - this.touchStartY) > 8) this.touchMoved = true;
+    if (this.settingsOpen && this.settingsDragging) this.setAudioVolumeFromX(x);
   }
 
   handleTouchEnd() {
+    if (this.settingsDragging) this.settingsDragging = false;
     if (this.state === 'tutorial') { this.handleTutorialTouchEnd(); return; }
     if (this.state !== 'playing') return;
     
@@ -1063,6 +1207,7 @@ class Game {
       }
       this.spawnText(target.x, target.y - 20, result.text, result.gold > 0 ? '#66BB6A' : '#EF5350');
       this.spawnParticles(target.x, target.y, result.gold > 0 ? '#FFD700' : '#555', result.gold > 0 ? 5 : 2, result.gold > 0 ? 12 : 6);
+      this.playSound(result.gold > 0 ? 'serve_success' : 'wrong');
       if (result.gold <= 0 && result.popularity === CONFIG.GAME.popularityWrong) {
         this.triggerFeedback('wrongOrder', target.x, target.y - 22, target);
       }
@@ -1152,6 +1297,7 @@ class Game {
     const result = target.serve(this.heldPancake, priceMap, {});
     this.spawnText(target.x, target.y - 20, result.text || '上菜!', '#66BB6A');
     this.spawnParticles(target.x, target.y, '#FFD700', 5, 12);
+    this.playSound('serve_success');
     if (this.heldFromPan >= 0) this.pans[this.heldFromPan].pancake = null;
     this.heldPancake = null; this.heldFromPan = -1;
     this.tutorial.step = 5;
@@ -1168,6 +1314,7 @@ class Game {
   onButton(btn) {
     if (btn.type === 'shopToggle') {
       this.shopOpen = !this.shopOpen;
+      this.playSound('shop_open');
       return;
     }
 
@@ -1189,19 +1336,30 @@ class Game {
 
     if (btn.type === 'buy') {
       const cost = btn.cost;
-      if (this.resources.gold < cost) return;
+      if (this.resources.gold < cost) {
+        if (btn.sourceId) this.spawnText(btn.x + btn.w / 2, btn.y - 8, '金币不够', '#D95F4C');
+        return;
+      }
+      const amount = btn.buyAmount || (btn.item === 'batter' ? 5 : 3);
       this.resources.gold -= cost;
-      this.resources[btn.item] += (btn.item === 'batter' ? 5 : 3);
+      this.resources[btn.item] += amount;
       this.spawnParticles(btn.x + btn.w / 2, btn.y + btn.h / 2, '#FFD700', 2, 5);
+      if (btn.sourceId) this.spawnText(btn.x + btn.w / 2, btn.y - 10, btn.quickLabel + '+' + amount, '#3F8F73');
+      this.playSound('restock');
       return;
     }
 
     if (btn.type === 'buyBundle') {
-      if (this.wave < btn.unlockWave || this.resources.gold < btn.cost) return;
+      if (this.wave < btn.unlockWave) return;
+      if (this.resources.gold < btn.cost) {
+        if (btn.sourceId) this.spawnText(btn.x + btn.w / 2, btn.y - 8, '金币不够', '#D95F4C');
+        return;
+      }
       this.resources.gold -= btn.cost;
       btn.items.forEach(itemId => { this.resources[itemId] += btn.buyAmount; });
       this.spawnParticles(btn.x + btn.w / 2, btn.y + btn.h / 2, '#FFD700', 3, 8);
       this.spawnText(btn.x + btn.w / 2, btn.y - 10, '小料各+' + btn.buyAmount, '#3F8F73');
+      this.playSound('restock');
       return;
     }
 
@@ -1217,6 +1375,7 @@ class Game {
         this.containerMax = CONFIG.GAME.containerMaxSlots[this.upgrades.container];
         this.spawnParticles(btn.x + btn.w / 2, btn.y + btn.h / 2, '#AB47BC', 4, 10);
         this.spawnText(btn.x + btn.w / 2, btn.y - 10, '托盘+' + this.containerMax, '#AB47BC');
+        this.playSound('restock');
         return;
       }
       const up = CONFIG.UPGRADES.find(u => u.id === btn.upId);
@@ -1226,6 +1385,7 @@ class Game {
       this.upgrades[btn.upId]++;
       this.spawnParticles(btn.x + btn.w / 2, btn.y + btn.h / 2, '#AB47BC', 4, 10);
       this.spawnText(btn.x + btn.w / 2, btn.y - 10, btn.upId === 'speed' ? '技巧生效' : btn.label + '+1', '#AB47BC');
+      this.playSound('restock');
       if (btn.upId === 'slot') {
         const oldPans = this.pans.map(p => p.pancake);
         this.initPans();
@@ -1477,6 +1637,8 @@ class Game {
       }
     });
 
+    this.renderQuickRestockButtons(ctx);
+
     // ---------- 手持原料绘制 ----------
     if (this.heldIngredient) {
       const ing = this.heldIngredient;
@@ -1668,6 +1830,56 @@ class Game {
     ctx.restore();
   }
 
+  renderQuickRestockButtons(ctx) {
+    const buttons = this.getQuickRestockButtons();
+    if (buttons.length === 0) return;
+
+    buttons.forEach(btn => {
+      const disabled = btn.disabled;
+      const centerY = btn.y + btn.h / 2;
+      const attention = this.getQuickRestockAttention(btn);
+      ctx.save();
+      ctx.translate(attention.shakeX, 0);
+      ctx.fillStyle = 'rgba(242,183,5,' + attention.glowAlpha + ')';
+      fillRoundRect(
+        ctx,
+        btn.x - attention.glowRadius,
+        btn.y - attention.glowRadius,
+        btn.w + attention.glowRadius * 2,
+        btn.h + attention.glowRadius * 2,
+        10
+      );
+      ctx.fillStyle = 'rgba(23,35,39,0.18)';
+      fillRoundRect(ctx, btn.x + 2, btn.y + 2, btn.w, btn.h, 9);
+      ctx.fillStyle = disabled ? 'rgba(207,199,187,0.94)' : 'rgba(255,235,178,0.96)';
+      fillRoundRect(ctx, btn.x, btn.y, btn.w, btn.h, 9);
+      ctx.strokeStyle = disabled ? '#9EA7AA' : '#D69B2A';
+      ctx.lineWidth = 2;
+      strokeRoundRect(ctx, btn.x, btn.y, btn.w, btn.h, 9);
+
+      if (btn.type === 'buyBundle') {
+        const iconIds = ['lettuce', 'crispy', 'scallion', 'sauce'];
+        iconIds.forEach((id, index) => {
+          drawIngredientIcon(ctx, id, btn.x + 12 + index * 9, centerY - 5, 8);
+        });
+      } else {
+        drawIngredientIcon(ctx, btn.icon || btn.item, btn.x + 18, centerY, 20);
+      }
+
+      const textX = btn.type === 'buyBundle' ? btn.x + 50 : btn.x + 36;
+      const amount = btn.type === 'buy' ? (btn.buyAmount || (btn.item === 'batter' ? 5 : 3)) : btn.buyAmount;
+      ctx.fillStyle = disabled ? '#607D8B' : CONFIG.COLOR.text;
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(btn.quickLabel, textX, btn.y + 12);
+      ctx.font = '8px sans-serif';
+      ctx.fillStyle = disabled ? '#78909C' : '#8A6B22';
+      ctx.fillText('+' + amount + '  💰' + btn.cost, textX, btn.y + 26);
+      ctx.restore();
+    });
+  }
+
   renderShopPanel(ctx) {
     const w = this.width, h = this.height;
     const panel = this.shopPanel;
@@ -1748,7 +1960,7 @@ class Game {
     ctx.fillStyle = disabled ? '#EEE' : '#FFEB3B';
     let detail = '';
     if (btn.type === 'buy') {
-      const amount = btn.item === 'batter' ? 5 : 3;
+      const amount = btn.buyAmount || (btn.item === 'batter' ? 5 : 3);
       detail = '💰' + btn.cost + '  +' + amount;
     } else if (btn.type === 'buyBundle') {
       detail = this.wave < btn.unlockWave ? '第' + btn.unlockWave + '波开放' : '💰' + btn.cost + '  四种各+' + btn.buyAmount;
@@ -2040,6 +2252,15 @@ class Game {
     ctx.strokeStyle = CONFIG.COLOR.panBorder; ctx.lineWidth = 2; strokeRoundRect(ctx, catalogBtn.x, catalogBtn.y, catalogBtn.w, catalogBtn.h, 10);
     ctx.fillStyle = CONFIG.COLOR.text; ctx.font = 'bold 14px sans-serif';
     ctx.fillText('👥 顾客图鉴', catalogBtn.x + catalogBtn.w / 2, catalogBtn.y + catalogBtn.h / 2);
+
+    const settingsBtn = this.menuSettingsBtn;
+    ctx.fillStyle = 'rgba(23,35,39,0.14)'; fillRoundRect(ctx, settingsBtn.x + 2, settingsBtn.y + 3, settingsBtn.w, settingsBtn.h, 10);
+    ctx.fillStyle = '#FFF'; fillRoundRect(ctx, settingsBtn.x, settingsBtn.y, settingsBtn.w, settingsBtn.h, 10);
+    ctx.strokeStyle = CONFIG.COLOR.panBorder; ctx.lineWidth = 2; strokeRoundRect(ctx, settingsBtn.x, settingsBtn.y, settingsBtn.w, settingsBtn.h, 10);
+    ctx.fillStyle = CONFIG.COLOR.text; ctx.font = 'bold 14px sans-serif';
+    ctx.fillText('⚙ 设置', settingsBtn.x + settingsBtn.w / 2, settingsBtn.y + settingsBtn.h / 2);
+
+    if (this.settingsOpen) this.renderSettings(ctx);
   }
 
   renderCatalog(ctx) {
@@ -2138,6 +2359,93 @@ class Game {
     ctx.fillStyle = '#FFF'; fillRoundRect(ctx, btn4.x, btn4.y, btn4.w, btn4.h, 10);
     ctx.strokeStyle = CONFIG.COLOR.panBorder; ctx.lineWidth = 2; strokeRoundRect(ctx, btn4.x, btn4.y, btn4.w, btn4.h, 10);
     ctx.fillStyle = CONFIG.COLOR.text; ctx.font = 'bold 16px sans-serif'; ctx.fillText('👥 ' + btn4.label, w / 2, btn4.y + btn4.h / 2);
+
+    const btn5 = this.pauseSettingsBtn;
+    ctx.fillStyle = '#FFF'; fillRoundRect(ctx, btn5.x, btn5.y, btn5.w, btn5.h, 10);
+    ctx.strokeStyle = CONFIG.COLOR.panBorder; ctx.lineWidth = 2; strokeRoundRect(ctx, btn5.x, btn5.y, btn5.w, btn5.h, 10);
+    ctx.fillStyle = CONFIG.COLOR.text; ctx.font = 'bold 16px sans-serif'; ctx.fillText('⚙ ' + btn5.label, w / 2, btn5.y + btn5.h / 2);
+
+    if (this.settingsOpen) this.renderSettings(ctx);
+  }
+
+  renderSettings(ctx) {
+    const panel = this.settingsPanel;
+    const w = this.width, h = this.height;
+    if (!panel) return;
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.32)';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = 'rgba(255,248,234,0.98)';
+    fillRoundRect(ctx, panel.x, panel.y, panel.w, panel.h, 14);
+    ctx.strokeStyle = CONFIG.COLOR.panBorder;
+    ctx.lineWidth = 2.5;
+    strokeRoundRect(ctx, panel.x, panel.y, panel.w, panel.h, 14);
+
+    ctx.fillStyle = CONFIG.COLOR.text;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 18px sans-serif';
+    ctx.fillText('设置', panel.x + panel.w / 2, panel.y + 24);
+
+    const close = this.settingsCloseBtn;
+    ctx.fillStyle = '#FFF';
+    fillRoundRect(ctx, close.x, close.y, close.w, close.h, 7);
+    ctx.strokeStyle = CONFIG.COLOR.panBorder;
+    ctx.lineWidth = 1.8;
+    strokeRoundRect(ctx, close.x, close.y, close.w, close.h, 7);
+    ctx.strokeStyle = '#24343A';
+    ctx.lineWidth = 2.2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(close.x + 7, close.y + 6);
+    ctx.lineTo(close.x + close.w - 7, close.y + close.h - 6);
+    ctx.moveTo(close.x + close.w - 7, close.y + 6);
+    ctx.lineTo(close.x + 7, close.y + close.h - 6);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+
+    const slider = this.settingsSlider;
+    const volumePct = this.audio.volume / 100;
+    ctx.fillStyle = '#D9C4A8';
+    fillRoundRect(ctx, slider.x, slider.y + 5, slider.w, 10, 5);
+    ctx.fillStyle = '#2D88A8';
+    fillRoundRect(ctx, slider.x, slider.y + 5, slider.w * volumePct, 10, 5);
+    const knobX = slider.x + slider.w * volumePct;
+    ctx.fillStyle = '#FFF';
+    ctx.beginPath();
+    ctx.arc(knobX, slider.y + 10, 12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = CONFIG.COLOR.panBorder;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.fillStyle = CONFIG.COLOR.text;
+    ctx.font = 'bold 14px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('音量', slider.x, slider.y - 16);
+    ctx.textAlign = 'right';
+    ctx.fillText(this.audio.volume + '%', slider.x + slider.w, slider.y - 16);
+
+    const toggle = this.settingsToggleBtn;
+    const switchOn = this.audio.enabled;
+    ctx.fillStyle = switchOn ? '#74C873' : '#C7D1D7';
+    fillRoundRect(ctx, toggle.x, toggle.y, toggle.w, toggle.h, toggle.h / 2);
+    ctx.strokeStyle = CONFIG.COLOR.panBorder;
+    ctx.lineWidth = 1.5;
+    strokeRoundRect(ctx, toggle.x, toggle.y, toggle.w, toggle.h, toggle.h / 2);
+    const knobRadius = toggle.h / 2 - 3;
+    const knobCenterX = switchOn ? toggle.x + toggle.w - knobRadius - 3 : toggle.x + knobRadius + 3;
+    ctx.fillStyle = '#FFF';
+    ctx.beginPath();
+    ctx.arc(knobCenterX, toggle.y + toggle.h / 2, knobRadius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(36,52,58,0.22)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.textAlign = 'center';
+    ctx.restore();
   }
 
   renderInfluencer(ctx) {
